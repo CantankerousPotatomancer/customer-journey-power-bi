@@ -241,5 +241,6 @@
     "supportsHighlight": false,
     "sorting": {
         "default": {}
-    }
+    },
+    "privileges": []
 }
