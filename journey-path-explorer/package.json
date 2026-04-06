@@ -7,18 +7,23 @@
         "start": "pbiviz start",
         "package": "pbiviz package",
         "build": "pbiviz package",
-        "lint": "eslint src --ext .ts"
+        "lint": "eslint src"
     },
     "devDependencies": {
-        "powerbi-visuals-tools": "^5.4.2",
+        "powerbi-visuals-tools": "^7.0.3",
         "@types/d3": "^7.4.3",
         "typescript": "^5.3.3",
-        "@typescript-eslint/eslint-plugin": "^6.0.0",
-        "@typescript-eslint/parser": "^6.0.0",
-        "eslint": "^8.0.0"
+        "@typescript-eslint/eslint-plugin": "^8.0.0",
+        "@typescript-eslint/parser": "^8.0.0",
+        "eslint": "^9.0.0",
+        "@eslint/js": "^9.0.0"
     },
     "dependencies": {
         "d3": "^7.9.0",
         "powerbi-visuals-api": "~5.3.0"
+    },
+    "overrides": {
+        "lodash.isequal": "^4.5.0",
+        "inflight": "^1.0.6"
     }
 }
