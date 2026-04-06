@@ -53,188 +53,152 @@
     ],
     "objects": {
         "dataControls": {
-            "displayName": "Data Controls",
             "properties": {
                 "topN": {
-                    "displayName": "Top N per step",
-                    "description": "Maximum number of nodes shown per step column",
                     "type": { "numeric": true }
                 },
                 "minCount": {
-                    "displayName": "Min transition count",
-                    "description": "Nodes with fewer transitions than this threshold are hidden",
                     "type": { "numeric": true }
                 }
             }
         },
         "appearance": {
-            "displayName": "Appearance",
             "properties": {
                 "barOpacity": {
-                    "displayName": "Bar fill opacity (%)",
-                    "description": "Opacity of the bar fill color (0–100)",
                     "type": { "numeric": true }
                 },
                 "showRank": {
-                    "displayName": "Show rank numbers",
-                    "description": "Show 1, 2, 3… rank prefix on each node row",
                     "type": { "bool": true }
                 },
                 "showCount": {
-                    "displayName": "Show transition count",
-                    "description": "Show the numeric transition count on the right side of each row",
                     "type": { "bool": true }
                 },
                 "columnMinWidth": {
-                    "displayName": "Column min width (px)",
-                    "description": "Minimum pixel width for each step column",
                     "type": { "numeric": true }
                 },
                 "fontSize": {
-                    "displayName": "Font size",
-                    "description": "Base font size in pixels for node labels",
                     "type": { "numeric": true }
                 }
             }
         },
         "colorRule1": {
-            "displayName": "Color Rule 1",
             "properties": {
-                "substring": { "displayName": "Substring", "type": { "text": true } },
-                "color": { "displayName": "Color", "type": { "fill": { "solid": { "color": true } } } }
+                "substring": { "type": { "text": true } },
+                "color": { "type": { "fill": { "solid": { "color": true } } } }
             }
         },
         "colorRule2": {
-            "displayName": "Color Rule 2",
             "properties": {
-                "substring": { "displayName": "Substring", "type": { "text": true } },
-                "color": { "displayName": "Color", "type": { "fill": { "solid": { "color": true } } } }
+                "substring": { "type": { "text": true } },
+                "color": { "type": { "fill": { "solid": { "color": true } } } }
             }
         },
         "colorRule3": {
-            "displayName": "Color Rule 3",
             "properties": {
-                "substring": { "displayName": "Substring", "type": { "text": true } },
-                "color": { "displayName": "Color", "type": { "fill": { "solid": { "color": true } } } }
+                "substring": { "type": { "text": true } },
+                "color": { "type": { "fill": { "solid": { "color": true } } } }
             }
         },
         "colorRule4": {
-            "displayName": "Color Rule 4",
             "properties": {
-                "substring": { "displayName": "Substring", "type": { "text": true } },
-                "color": { "displayName": "Color", "type": { "fill": { "solid": { "color": true } } } }
+                "substring": { "type": { "text": true } },
+                "color": { "type": { "fill": { "solid": { "color": true } } } }
             }
         },
         "colorRule5": {
-            "displayName": "Color Rule 5",
             "properties": {
-                "substring": { "displayName": "Substring", "type": { "text": true } },
-                "color": { "displayName": "Color", "type": { "fill": { "solid": { "color": true } } } }
+                "substring": { "type": { "text": true } },
+                "color": { "type": { "fill": { "solid": { "color": true } } } }
             }
         },
         "colorRule6": {
-            "displayName": "Color Rule 6",
             "properties": {
-                "substring": { "displayName": "Substring", "type": { "text": true } },
-                "color": { "displayName": "Color", "type": { "fill": { "solid": { "color": true } } } }
+                "substring": { "type": { "text": true } },
+                "color": { "type": { "fill": { "solid": { "color": true } } } }
             }
         },
         "colorRule7": {
-            "displayName": "Color Rule 7",
             "properties": {
-                "substring": { "displayName": "Substring", "type": { "text": true } },
-                "color": { "displayName": "Color", "type": { "fill": { "solid": { "color": true } } } }
+                "substring": { "type": { "text": true } },
+                "color": { "type": { "fill": { "solid": { "color": true } } } }
             }
         },
         "colorRule8": {
-            "displayName": "Color Rule 8",
             "properties": {
-                "substring": { "displayName": "Substring", "type": { "text": true } },
-                "color": { "displayName": "Color", "type": { "fill": { "solid": { "color": true } } } }
+                "substring": { "type": { "text": true } },
+                "color": { "type": { "fill": { "solid": { "color": true } } } }
             }
         },
         "colorRule9": {
-            "displayName": "Color Rule 9",
             "properties": {
-                "substring": { "displayName": "Substring", "type": { "text": true } },
-                "color": { "displayName": "Color", "type": { "fill": { "solid": { "color": true } } } }
+                "substring": { "type": { "text": true } },
+                "color": { "type": { "fill": { "solid": { "color": true } } } }
             }
         },
         "colorRule10": {
-            "displayName": "Color Rule 10",
             "properties": {
-                "substring": { "displayName": "Substring", "type": { "text": true } },
-                "color": { "displayName": "Color", "type": { "fill": { "solid": { "color": true } } } }
+                "substring": { "type": { "text": true } },
+                "color": { "type": { "fill": { "solid": { "color": true } } } }
             }
         },
         "colorRule11": {
-            "displayName": "Color Rule 11",
             "properties": {
-                "substring": { "displayName": "Substring", "type": { "text": true } },
-                "color": { "displayName": "Color", "type": { "fill": { "solid": { "color": true } } } }
+                "substring": { "type": { "text": true } },
+                "color": { "type": { "fill": { "solid": { "color": true } } } }
             }
         },
         "colorRule12": {
-            "displayName": "Color Rule 12",
             "properties": {
-                "substring": { "displayName": "Substring", "type": { "text": true } },
-                "color": { "displayName": "Color", "type": { "fill": { "solid": { "color": true } } } }
+                "substring": { "type": { "text": true } },
+                "color": { "type": { "fill": { "solid": { "color": true } } } }
             }
         },
         "colorRule13": {
-            "displayName": "Color Rule 13",
             "properties": {
-                "substring": { "displayName": "Substring", "type": { "text": true } },
-                "color": { "displayName": "Color", "type": { "fill": { "solid": { "color": true } } } }
+                "substring": { "type": { "text": true } },
+                "color": { "type": { "fill": { "solid": { "color": true } } } }
             }
         },
         "colorRule14": {
-            "displayName": "Color Rule 14",
             "properties": {
-                "substring": { "displayName": "Substring", "type": { "text": true } },
-                "color": { "displayName": "Color", "type": { "fill": { "solid": { "color": true } } } }
+                "substring": { "type": { "text": true } },
+                "color": { "type": { "fill": { "solid": { "color": true } } } }
             }
         },
         "colorRule15": {
-            "displayName": "Color Rule 15",
             "properties": {
-                "substring": { "displayName": "Substring", "type": { "text": true } },
-                "color": { "displayName": "Color", "type": { "fill": { "solid": { "color": true } } } }
+                "substring": { "type": { "text": true } },
+                "color": { "type": { "fill": { "solid": { "color": true } } } }
             }
         },
         "colorRule16": {
-            "displayName": "Color Rule 16",
             "properties": {
-                "substring": { "displayName": "Substring", "type": { "text": true } },
-                "color": { "displayName": "Color", "type": { "fill": { "solid": { "color": true } } } }
+                "substring": { "type": { "text": true } },
+                "color": { "type": { "fill": { "solid": { "color": true } } } }
             }
         },
         "colorRule17": {
-            "displayName": "Color Rule 17",
             "properties": {
-                "substring": { "displayName": "Substring", "type": { "text": true } },
-                "color": { "displayName": "Color", "type": { "fill": { "solid": { "color": true } } } }
+                "substring": { "type": { "text": true } },
+                "color": { "type": { "fill": { "solid": { "color": true } } } }
             }
         },
         "colorRule18": {
-            "displayName": "Color Rule 18",
             "properties": {
-                "substring": { "displayName": "Substring", "type": { "text": true } },
-                "color": { "displayName": "Color", "type": { "fill": { "solid": { "color": true } } } }
+                "substring": { "type": { "text": true } },
+                "color": { "type": { "fill": { "solid": { "color": true } } } }
             }
         },
         "colorRule19": {
-            "displayName": "Color Rule 19",
             "properties": {
-                "substring": { "displayName": "Substring", "type": { "text": true } },
-                "color": { "displayName": "Color", "type": { "fill": { "solid": { "color": true } } } }
+                "substring": { "type": { "text": true } },
+                "color": { "type": { "fill": { "solid": { "color": true } } } }
             }
         },
         "colorRule20": {
-            "displayName": "Color Rule 20",
             "properties": {
-                "substring": { "displayName": "Substring", "type": { "text": true } },
-                "color": { "displayName": "Color", "type": { "fill": { "solid": { "color": true } } } }
+                "substring": { "type": { "text": true } },
+                "color": { "type": { "fill": { "solid": { "color": true } } } }
             }
         }
     },
