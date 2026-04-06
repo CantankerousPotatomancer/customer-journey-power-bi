@@ -2,48 +2,16 @@
     "$schema": "https://developer.microsoft.com/json-schemas/core-build/capabilities.json",
     "dataRoles": [
         {
-            "displayName": "From Step",
-            "name": "fromStep",
-            "kind": "Grouping",
-            "description": "Integer step number (1, 2, 3…) — the step at which this transition originates"
-        },
-        {
-            "displayName": "From Node",
-            "name": "fromNode",
-            "kind": "Grouping",
-            "description": "Label of the node the customer came FROM"
-        },
-        {
-            "displayName": "To Node",
-            "name": "toNode",
-            "kind": "Grouping",
-            "description": "Label of the node the customer went TO"
-        },
-        {
-            "displayName": "Transition Count",
-            "name": "transitionCount",
-            "kind": "Measure",
-            "description": "Numeric count of transitions for this FromNode → ToNode pair at this step"
+            "displayName": "Journey Data",
+            "name": "values",
+            "kind": "GroupingOrMeasure"
         }
     ],
     "dataViewMappings": [
         {
-            "conditions": [
-                {
-                    "fromStep": { "max": 1 },
-                    "fromNode": { "max": 1 },
-                    "toNode": { "max": 1 },
-                    "transitionCount": { "max": 1 }
-                }
-            ],
             "table": {
                 "rows": {
-                    "select": [
-                        { "for": { "in": "fromStep" } },
-                        { "for": { "in": "fromNode" } },
-                        { "for": { "in": "toNode" } },
-                        { "for": { "in": "transitionCount" } }
-                    ],
+                    "for": { "in": "values" },
                     "dataReductionAlgorithm": {
                         "window": { "count": 30000 }
                     }
@@ -202,7 +170,6 @@
             }
         }
     },
-    "supportsHighlight": false,
     "sorting": {
         "default": {}
     },

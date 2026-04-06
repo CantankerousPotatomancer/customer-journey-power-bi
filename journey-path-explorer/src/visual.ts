@@ -103,7 +103,7 @@ export class Visual implements IVisual {
             "padding:20px",
             "text-align:center"
         ].join(";");
-        msg.textContent = "Add From Step, From Node, To Node, and Transition Count fields to display the journey explorer.";
+        msg.textContent = "Add FromStep, FromNode, ToNode, and TransitionCount fields to the Journey Data bucket to display the journey explorer.";
         this.target.appendChild(msg);
     }
 

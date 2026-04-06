@@ -21,14 +21,11 @@ export function transformDataView(dataView: powerbi.DataView): StepTransitions {
     const columns = dataView.table.columns;
     const rows    = dataView.table.rows;
 
-    // Locate each data role's column index
-    let fromStepIdx = -1, fromNodeIdx = -1, toNodeIdx = -1, countIdx = -1;
-    columns.forEach((col, i) => {
-        if (col.roles["fromStep"])       fromStepIdx = i;
-        if (col.roles["fromNode"])       fromNodeIdx = i;
-        if (col.roles["toNode"])         toNodeIdx   = i;
-        if (col.roles["transitionCount"]) countIdx   = i;
-    });
+    // Locate each column by displayName (all columns share the single "values" role)
+    const fromStepIdx        = columns.findIndex(c => c.displayName === "FromStep");
+    const fromNodeIdx        = columns.findIndex(c => c.displayName === "FromNode");
+    const toNodeIdx          = columns.findIndex(c => c.displayName === "ToNode");
+    const countIdx           = columns.findIndex(c => c.displayName === "TransitionCount");
 
     if (fromStepIdx < 0 || fromNodeIdx < 0 || toNodeIdx < 0 || countIdx < 0) {
         return result;
