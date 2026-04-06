@@ -1,5 +1,4 @@
 {
-    "$schema": "https://developer.microsoft.com/json-schemas/core-build/pbiviz.json",
     "visual": {
         "name": "journeyPathExplorer",
         "displayName": "Journey Path Explorer",
@@ -7,7 +6,7 @@
         "visualClassName": "Visual",
         "version": "1.0.0.0",
         "description": "Interactive step-aware customer journey drilldown. Click any node to see what customers did next, step by step.",
-        "supportUrl": "",
+        "supportUrl": "https://github.com/CantankerousPotatomancer/customer-journey-power-bi",
         "gitHubUrl": ""
     },
     "apiVersion": "5.3.0",
