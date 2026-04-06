@@ -19,13 +19,12 @@
         "sourceMap": true,
         "target": "ES6"
     },
+    "files": [
+        "src/visual.ts"
+    ],
     "exclude": [
         "node_modules",
         ".tmp",
         "dist"
-    ],
-    "include": [
-        "src/**/*.ts",
-        ".api/v*.*.*/PowerBI-visuals.d.ts"
     ]
 }
