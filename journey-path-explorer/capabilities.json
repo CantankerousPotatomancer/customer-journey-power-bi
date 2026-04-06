@@ -1,5 +1,4 @@
 {
-    "$schema": "https://developer.microsoft.com/json-schemas/core-build/capabilities.json",
     "dataRoles": [
         {
             "displayName": "Journey Data",
