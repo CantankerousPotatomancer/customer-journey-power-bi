@@ -1,0 +1,42 @@
+/*
+ * Journey Path Explorer — visual styles
+ *
+ * Most layout is applied inline via D3 (renderer.ts) so that settings like
+ * fontSize and columnMinWidth can be applied dynamically.  This file covers
+ * the few global styles that benefit from a stylesheet (scrollbars, resets).
+ */
+
+// ── Box-sizing reset ──────────────────────────────────────────────────────────
+* {
+    box-sizing: border-box;
+}
+
+// ── Scrollbar styling (WebKit / Chromium — used in Power BI Desktop) ──────────
+::-webkit-scrollbar {
+    width:  6px;
+    height: 6px;
+}
+
+::-webkit-scrollbar-track {
+    background: #f0ede6;
+    border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb {
+    background: #c9c6bc;
+    border-radius: 3px;
+
+    &:hover {
+        background: #a8a49c;
+    }
+}
+
+// Horizontal scroll container — subtle bottom shadow to hint at overflow
+.column-area {
+    scrollbar-gutter: stable;
+}
+
+// Node rows — smooth hover transition
+.node-row {
+    transition: background-color 80ms ease;
+}

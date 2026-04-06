@@ -1,0 +1,31 @@
+{
+    "compilerOptions": {
+        "allowSyntheticDefaultImports": true,
+        "declaration": false,
+        "esModuleInterop": true,
+        "lib": [
+            "dom",
+            "ES5",
+            "ES6",
+            "ES2015.Iterable",
+            "ES2015.Symbol.WellKnown",
+            "ES2020"
+        ],
+        "module": "CommonJS",
+        "moduleResolution": "node",
+        "noImplicitAny": false,
+        "outDir": ".tmp/build/src",
+        "rootDir": ".",
+        "sourceMap": true,
+        "target": "ES6"
+    },
+    "exclude": [
+        "node_modules",
+        ".tmp",
+        "dist"
+    ],
+    "include": [
+        "src/**/*.ts",
+        ".api/v*.*.*/PowerBI-visuals.d.ts"
+    ]
+}

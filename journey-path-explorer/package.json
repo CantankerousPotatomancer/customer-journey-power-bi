@@ -1,0 +1,24 @@
+{
+    "name": "journey-path-explorer",
+    "version": "1.0.0",
+    "description": "Journey Path Explorer - interactive step-aware customer journey drilldown for Power BI",
+    "scripts": {
+        "pbiviz": "pbiviz",
+        "start": "pbiviz start",
+        "package": "pbiviz package",
+        "build": "pbiviz package",
+        "lint": "eslint src --ext .ts"
+    },
+    "devDependencies": {
+        "powerbi-visuals-tools": "^5.4.2",
+        "@types/d3": "^7.4.3",
+        "typescript": "^5.3.3",
+        "@typescript-eslint/eslint-plugin": "^6.0.0",
+        "@typescript-eslint/parser": "^6.0.0",
+        "eslint": "^8.0.0"
+    },
+    "dependencies": {
+        "d3": "^7.9.0",
+        "powerbi-visuals-api": "~5.3.0"
+    }
+}

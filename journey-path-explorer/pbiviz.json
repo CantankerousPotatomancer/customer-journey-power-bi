@@ -1,0 +1,25 @@
+{
+    "$schema": "https://developer.microsoft.com/json-schemas/core-build/pbiviz.json",
+    "visual": {
+        "name": "journeyPathExplorer",
+        "displayName": "Journey Path Explorer",
+        "guid": "journeyPathExplorerC9A4F2E1B8D3A7F6E2C5B1D4A8F3E7C2",
+        "visualClassName": "Visual",
+        "version": "1.0.0",
+        "description": "Interactive step-aware customer journey drilldown. Click any node to see what customers did next, step by step.",
+        "supportUrl": "",
+        "gitHubUrl": ""
+    },
+    "apiVersion": "5.3.0",
+    "author": {
+        "name": "Joshua Koester",
+        "email": ""
+    },
+    "assets": {
+        "icon": "assets/icon.png"
+    },
+    "externalJS": [],
+    "style": "style/visual.less",
+    "capabilities": "capabilities.json",
+    "stringResources": []
+}
