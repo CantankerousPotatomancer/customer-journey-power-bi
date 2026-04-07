@@ -26,6 +26,8 @@ import {
 import { PathState, createInitialState, selectNode, resetState } from "./state";
 import { render } from "./renderer";
 
+const DEBUG = true;
+
 export class Visual implements IVisual {
     private readonly target: HTMLElement;
     private readonly host: IVisualHost;
@@ -37,6 +39,8 @@ export class Visual implements IVisual {
     private fromNodeTarget: IFilterColumnTarget | null = null;
     /** True when the next update() is the result of our own applyJsonFilter call. */
     private filterPending = false;
+    /** Retained for debug overlay; null when no dataview is present. */
+    private lastDv: DataView | null = null;
 
     constructor(options: VisualConstructorOptions) {
         this.target = options.element;
@@ -72,6 +76,7 @@ export class Visual implements IVisual {
         }
 
         const dv: DataView = dvs[0];
+        this.lastDv      = dv;
         this.settings    = parseSettings(dv);
         this.transitions = transformDataView(dv);
         this.captureFilterTargets(dv);
@@ -176,6 +181,71 @@ export class Visual implements IVisual {
                 this.redraw();
             }
         );
+        if (DEBUG) {
+            this.renderDebugOverlay();
+        }
+    }
+
+    private renderDebugOverlay(): void {
+        const OVERLAY_ID = "__debug_overlay__";
+        let overlay = this.target.querySelector<HTMLDivElement>(`#${OVERLAY_ID}`);
+        if (!overlay) {
+            overlay = document.createElement("div");
+            overlay.id = OVERLAY_ID;
+            overlay.style.cssText = [
+                "position:absolute",
+                "top:8px",
+                "right:8px",
+                "background:rgba(0,0,0,0.72)",
+                "color:#fff",
+                "font-size:11px",
+                "font-family:Consolas,monospace",
+                "padding:8px 10px",
+                "border-radius:4px",
+                "z-index:9999",
+                "max-width:320px",
+                "line-height:1.6",
+                "pointer-events:none",
+                "white-space:pre"
+            ].join(";");
+            this.target.style.position = "relative";
+            this.target.appendChild(overlay);
+        }
+
+        const dv = this.lastDv;
+        const rowCount = dv?.table?.rows?.length ?? 0;
+
+        const fmtTarget = (t: IFilterColumnTarget | null) =>
+            t ? `${t.table}.${t.column}` : "NOT FOUND";
+
+        const selections = this.state.selections.length > 0
+            ? this.state.selections.join(", ")
+            : "empty";
+
+        // Count unique FromStep values in the current dataview rows
+        let uniqueFromSteps = 0;
+        if (dv?.table) {
+            const cols = dv.table.columns ?? [];
+            const fromStepIdx = cols.findIndex(c => c.displayName === "FromStep");
+            if (fromStepIdx >= 0) {
+                const seen = new Set<number>();
+                for (const row of dv.table.rows ?? []) {
+                    const v = Number(row[fromStepIdx]);
+                    if (isFinite(v)) seen.add(v);
+                }
+                uniqueFromSteps = seen.size;
+            }
+        }
+
+        overlay.textContent = [
+            `[DEBUG]`,
+            `Rows:          ${rowCount}`,
+            `FromStep col:  ${fmtTarget(this.fromStepTarget)}`,
+            `FromNode col:  ${fmtTarget(this.fromNodeTarget)}`,
+            `Selections:    ${selections}`,
+            `FilterPending: ${this.filterPending}`,
+            `Unique steps:  ${uniqueFromSteps}`
+        ].join("\n");
     }
 
     private renderNoData(): void {
