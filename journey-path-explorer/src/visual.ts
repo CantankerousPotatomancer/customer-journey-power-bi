@@ -70,7 +70,7 @@ export class Visual implements IVisual {
         this.target.style.height = `${viewport.height}px`;
 
         const dvs = options.dataViews;
-        if (!dvs?.length || !dvs[0]?.table) {
+        if (!dvs?.length || !dvs[0]?.categorical) {
             this.renderNoData();
             return;
         }
@@ -100,16 +100,17 @@ export class Visual implements IVisual {
      * dataview metadata. queryName is "Table.Column".
      */
     private captureFilterTargets(dv: DataView): void {
-        const columns = dv.table?.columns ?? [];
-        for (const col of columns) {
-            if (!col.queryName) continue;
-            const dot = col.queryName.indexOf(".");
+        const categories = dv.categorical?.categories ?? [];
+
+        for (const cat of categories) {
+            if (!cat.source.queryName) continue;
+            const dot    = cat.source.queryName.indexOf(".");
             if (dot < 0) continue;
-            const table  = col.queryName.substring(0, dot);
-            const column = col.queryName.substring(dot + 1);
-            if (col.displayName === "FromStep") {
+            const table  = cat.source.queryName.substring(0, dot);
+            const column = cat.source.queryName.substring(dot + 1);
+            if (cat.source.roles["fromStep"]) {
                 this.fromStepTarget = { table, column };
-            } else if (col.displayName === "FromNode") {
+            } else if (cat.source.roles["fromNode"]) {
                 this.fromNodeTarget = { table, column };
             }
         }
@@ -213,7 +214,9 @@ export class Visual implements IVisual {
         }
 
         const dv = this.lastDv;
-        const rowCount = dv?.table?.rows?.length ?? 0;
+        const categories  = dv?.categorical?.categories ?? [];
+        const fromStepCat = categories.find(c => c.source.roles?.["fromStep"]);
+        const rowCount    = fromStepCat?.values?.length ?? 0;
 
         const fmtTarget = (t: IFilterColumnTarget | null) =>
             t ? `${t.table}.${t.column}` : "NOT FOUND";
@@ -223,19 +226,12 @@ export class Visual implements IVisual {
             : "empty";
 
         // Count unique FromStep values in the current dataview rows
-        let uniqueFromSteps = 0;
-        if (dv?.table) {
-            const cols = dv.table.columns ?? [];
-            const fromStepIdx = cols.findIndex(c => c.displayName === "FromStep");
-            if (fromStepIdx >= 0) {
-                const seen = new Set<number>();
-                for (const row of dv.table.rows ?? []) {
-                    const v = Number(row[fromStepIdx]);
-                    if (isFinite(v)) seen.add(v);
-                }
-                uniqueFromSteps = seen.size;
-            }
+        const uniqueSteps = new Set<number>();
+        for (const v of fromStepCat?.values ?? []) {
+            const n = Number(v);
+            if (isFinite(n)) uniqueSteps.add(n);
         }
+        const uniqueFromSteps = uniqueSteps.size;
 
         overlay.textContent = [
             `[DEBUG]`,
@@ -263,7 +259,7 @@ export class Visual implements IVisual {
             "padding:20px",
             "text-align:center"
         ].join(";");
-        msg.textContent = "Add FromStep, FromNode, ToNode, and TransitionCount fields to the Journey Data bucket to display the journey explorer.";
+        msg.textContent = "Add fields to the From Step, From Node, To Node, and Transition Count buckets to display the journey explorer.";
         this.target.appendChild(msg);
     }
 
