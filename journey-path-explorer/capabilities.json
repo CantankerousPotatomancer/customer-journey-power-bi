@@ -19,6 +19,13 @@
         }
     ],
     "objects": {
+        "general": {
+            "properties": {
+                "filter": {
+                    "type": { "filter": {} }
+                }
+            }
+        },
         "dataControls": {
             "properties": {
                 "topN": {
