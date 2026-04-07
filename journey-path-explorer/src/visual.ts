@@ -17,6 +17,7 @@ import {
 } from "powerbi-models";
 
 import { transformDataView, StepTransitions } from "./dataTransform";
+import { colMatches } from "./columnMatch";
 import {
     parseSettings,
     VisualSettings,
@@ -128,11 +129,11 @@ export class Visual implements IVisual {
 
             if (!table || !column) continue;
 
-            if (displayName === "FromStep") {
+            if (colMatches(col, "FromStep")) {
                 this.fromStepTarget = { table, column };
             }
 
-            if (displayName === "FromNode") {
+            if (colMatches(col, "FromNode")) {
                 this.fromNodeTarget = { table, column };
             }
         }
@@ -238,7 +239,7 @@ export class Visual implements IVisual {
                 "padding:8px 10px",
                 "border-radius:4px",
                 "z-index:9999",
-                "max-width:320px",
+                "max-width:480px",
                 "line-height:1.6",
                 "pointer-events:none",
                 "white-space:pre"
@@ -258,16 +259,20 @@ export class Visual implements IVisual {
             ? this.state.selections.join(", ")
             : "empty";
 
-        const columnNames = tableColumns
-            .map(c => `${c.displayName}(${c.queryName ?? "?"})`)
-            .join(", ");
+        const columnLines = tableColumns.map((c, i) => {
+            const dn  = c.displayName ?? "(none)";
+            const qn  = c.queryName   ?? "(none)";
+            const ref = (c as any)?.expr?.ref ?? "(none)";
+            return `  col[${i}] dn="${dn}" qn="${qn}" ref="${ref}"`;
+        });
 
         overlay.textContent = [
             `[DEBUG]`,
             `hasDataView:   ${!!dv}`,
             `hasTable:      ${!!dv?.table}`,
             `Rows:          ${rowCount}`,
-            `Columns:       ${columnNames || "none"}`,
+            `Cols (${tableColumns.length}):`,
+            ...columnLines,
             `FromStep col:  ${fmtTarget(this.fromStepTarget)}`,
             `FromNode col:  ${fmtTarget(this.fromNodeTarget)}`,
             `Selections:    ${selections}`,

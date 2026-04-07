@@ -1,4 +1,5 @@
 import powerbi from "powerbi-visuals-api";
+import { colMatches } from "./columnMatch";
 
 export interface ColumnItem {
     label: string;
@@ -21,10 +22,10 @@ export function transformDataView(dataView: powerbi.DataView): StepTransitions {
     const columns = table.columns;
     const rows    = table.rows;
 
-    const fromStepIdx = columns.findIndex(c => c.displayName === "FromStep");
-    const fromNodeIdx = columns.findIndex(c => c.displayName === "FromNode");
-    const toNodeIdx   = columns.findIndex(c => c.displayName === "ToNode");
-    const countIdx    = columns.findIndex(c => c.displayName === "TransitionCount");
+    const fromStepIdx = columns.findIndex(c => colMatches(c, "FromStep"));
+    const fromNodeIdx = columns.findIndex(c => colMatches(c, "FromNode"));
+    const toNodeIdx   = columns.findIndex(c => colMatches(c, "ToNode"));
+    const countIdx    = columns.findIndex(c => colMatches(c, "TransitionCount"));
 
     if (fromStepIdx < 0 || fromNodeIdx < 0 || toNodeIdx < 0 || countIdx < 0) return result;
 
