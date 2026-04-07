@@ -111,15 +111,15 @@ export class Visual implements IVisual {
     }
 
     /**
-     * Apply a Power BI filter that scopes the dataview to only the rows
-     * needed for the current path:
+     * Apply Power BI filters that scope the dataview to only the rows needed
+     * for the current path. Power BI ANDs the two filters together:
      *   - FromStep IN [1, 2, ..., selections.length + 1]
-     *   - FromNode IN [selections..., <any step-1 nodes>]  (only when path drilled)
+     *   - FromNode IN [selections...]   (only when selections.length > 0)
      *
-     * Power BI ANDs separate filters, so we use a single AdvancedFilter on
-     * FromStep with OR'd "Is" conditions to limit step range. This dramatically
-     * shrinks the dataview compared to the full table while keeping all
-     * step-1 rows visible (which the visual always needs for column 1).
+     * When no selections exist (initial load / reset), only the FromStep
+     * filter is applied so that Step 1 returns all of its FromNode rows.
+     * We use FilterAction.replace so a stale FromNode filter from a previous
+     * drill-down is cleared on reset.
      */
     private applyPathFilter(state: PathState): void {
         if (!this.fromStepTarget) return;
@@ -130,18 +130,32 @@ export class Visual implements IVisual {
             stepConditions.push({ operator: "Is", value: s });
         }
 
-        const filter = new AdvancedFilter(
+        const stepFilter = new AdvancedFilter(
             this.fromStepTarget,
             "Or",
             stepConditions
         );
 
+        const filters: AdvancedFilter[] = [stepFilter];
+
+        if (state.selections.length > 0 && this.fromNodeTarget) {
+            const nodeConditions: IAdvancedFilterCondition[] = state.selections.map(
+                node => ({ operator: "Is", value: node })
+            );
+            const nodeFilter = new AdvancedFilter(
+                this.fromNodeTarget,
+                "Or",
+                nodeConditions
+            );
+            filters.push(nodeFilter);
+        }
+
         this.filterPending = true;
         this.host.applyJsonFilter(
-            filter,
+            filters,
             "general",
             "filter",
-            FilterAction.merge
+            FilterAction.replace
         );
     }
 
