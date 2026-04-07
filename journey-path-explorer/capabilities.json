@@ -1,51 +1,19 @@
 {
     "dataRoles": [
         {
-            "displayName": "From Step",
-            "name": "fromStep",
-            "kind": "Grouping"
-        },
-        {
-            "displayName": "From Node",
-            "name": "fromNode",
-            "kind": "Grouping"
-        },
-        {
-            "displayName": "To Node",
-            "name": "toNode",
-            "kind": "Grouping"
-        },
-        {
-            "displayName": "Transition Count",
-            "name": "transitionCount",
-            "kind": "Measure"
+            "displayName": "Journey Data",
+            "name": "values",
+            "kind": "GroupingOrMeasure"
         }
     ],
     "dataViewMappings": [
         {
-            "conditions": [
-                {
-                    "fromStep":        { "max": 1 },
-                    "fromNode":        { "max": 1 },
-                    "toNode":          { "max": 1 },
-                    "transitionCount": { "max": 1 }
-                }
-            ],
-            "categorical": {
-                "categories": {
-                    "select": [
-                        { "bind": { "to": "fromStep" } },
-                        { "bind": { "to": "fromNode" } },
-                        { "bind": { "to": "toNode" } }
-                    ],
+            "table": {
+                "rows": {
+                    "for": { "in": "values" },
                     "dataReductionAlgorithm": {
                         "window": { "count": 30000 }
                     }
-                },
-                "values": {
-                    "select": [
-                        { "bind": { "to": "transitionCount" } }
-                    ]
                 }
             }
         }

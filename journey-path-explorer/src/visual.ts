@@ -76,7 +76,7 @@ export class Visual implements IVisual {
         this.target.style.height = `${viewport.height}px`;
 
         const dvs = options.dataViews;
-        if (!dvs?.length || !dvs[0]?.categorical) {
+        if (!dvs?.length || !dvs[0]?.table?.rows?.length || !dvs[0]?.table?.columns?.length) {
             this.renderNoData();
             return;
         }
@@ -103,24 +103,36 @@ export class Visual implements IVisual {
 
     /**
      * Extract { table, column } targets for FromStep and FromNode from the
-     * dataview metadata. queryName is "Table.Column".
+     * dataview table metadata. queryName is "Table.Column".
      * Targets are reset on every call so that removing a field from the data
      * roles panel is reflected immediately — stale targets must not persist.
      */
-    private captureFilterTargets(dv: DataView): void {
+    private captureFilterTargets(dv: DataView | undefined): void {
         this.fromStepTarget = null;
         this.fromNodeTarget = null;
-        const categories = dv.categorical?.categories ?? [];
 
-        for (const cat of categories) {
-            if (!cat.source.queryName) continue;
-            const dot    = cat.source.queryName.indexOf(".");
-            if (dot < 0) continue;
-            const table  = cat.source.queryName.substring(0, dot);
-            const column = cat.source.queryName.substring(dot + 1);
-            if (cat.source.roles["fromStep"]) {
+        const columns = dv?.table?.columns ?? [];
+        for (const col of columns) {
+            const displayName = col.displayName ?? "";
+            const queryName   = col.queryName   ?? "";
+
+            const table =
+                (col as any)?.expr?.source?.entity ??
+                queryName.split(".")[0] ??
+                null;
+
+            const column =
+                (col as any)?.expr?.ref ??
+                queryName.split(".").slice(1).join(".") ??
+                displayName;
+
+            if (!table || !column) continue;
+
+            if (displayName === "FromStep") {
                 this.fromStepTarget = { table, column };
-            } else if (cat.source.roles["fromNode"]) {
+            }
+
+            if (displayName === "FromNode") {
                 this.fromNodeTarget = { table, column };
             }
         }
@@ -236,9 +248,8 @@ export class Visual implements IVisual {
         }
 
         const dv = this.lastDv;
-        const categories  = dv?.categorical?.categories ?? [];
-        const fromStepCat = categories.find(c => c.source.roles?.["fromStep"]);
-        const rowCount    = fromStepCat?.values?.length ?? 0;
+        const tableColumns = dv?.table?.columns ?? [];
+        const rowCount     = dv?.table?.rows?.length ?? 0;
 
         const fmtTarget = (t: IFilterColumnTarget | null) =>
             t ? `${t.table}.${t.column}` : "NOT FOUND";
@@ -247,22 +258,20 @@ export class Visual implements IVisual {
             ? this.state.selections.join(", ")
             : "empty";
 
-        // Count unique FromStep values in the current dataview rows
-        const uniqueSteps = new Set<number>();
-        for (const v of fromStepCat?.values ?? []) {
-            const n = Number(v);
-            if (isFinite(n)) uniqueSteps.add(n);
-        }
-        const uniqueFromSteps = uniqueSteps.size;
+        const columnNames = tableColumns
+            .map(c => `${c.displayName}(${c.queryName ?? "?"})`)
+            .join(", ");
 
         overlay.textContent = [
             `[DEBUG]`,
+            `hasDataView:   ${!!dv}`,
+            `hasTable:      ${!!dv?.table}`,
             `Rows:          ${rowCount}`,
+            `Columns:       ${columnNames || "none"}`,
             `FromStep col:  ${fmtTarget(this.fromStepTarget)}`,
             `FromNode col:  ${fmtTarget(this.fromNodeTarget)}`,
             `Selections:    ${selections}`,
-            `FilterPending: ${this.filterPendingCount > 0} [${this.filterPendingCount}]`,
-            `Unique steps:  ${uniqueFromSteps}`
+            `FilterPending: ${this.filterPendingCount > 0} [${this.filterPendingCount}]`
         ].join("\n");
     }
 
@@ -281,7 +290,7 @@ export class Visual implements IVisual {
             "padding:20px",
             "text-align:center"
         ].join(";");
-        msg.textContent = "Add fields to the From Step, From Node, To Node, and Transition Count buckets to display the journey explorer.";
+        msg.textContent = "Add the journey fields (FromStep, FromNode, ToNode, TransitionCount) to the Journey Data bucket to display the journey explorer.";
         this.target.appendChild(msg);
     }
 
