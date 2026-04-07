@@ -37,8 +37,14 @@ export class Visual implements IVisual {
     private lastViewport: { width: number; height: number };
     private fromStepTarget: IFilterColumnTarget | null = null;
     private fromNodeTarget: IFilterColumnTarget | null = null;
-    /** True when the next update() is the result of our own applyJsonFilter call. */
-    private filterPending = false;
+    /**
+     * Number of update() calls expected from Power BI as echoes of our own
+     * applyJsonFilter calls. A reset issues two calls (remove + merge), so this
+     * can be 2; a selection update issues one (merge only), so it is 1.
+     * Using a counter instead of a boolean prevents field-addition updates from
+     * being mistaken for filter echoes when multiple updates arrive concurrently.
+     */
+    private filterPendingCount = 0;
     /** Retained for debug overlay; null when no dataview is present. */
     private lastDv: DataView | null = null;
 
@@ -81,12 +87,12 @@ export class Visual implements IVisual {
         this.transitions = transformDataView(dv);
         this.captureFilterTargets(dv);
 
-        // If this update was triggered by our own applyJsonFilter call,
-        // preserve the current path state. Otherwise (initial load, viewport
-        // resize, external slicer change) leave state as-is too — the user
-        // can use Reset to clear the path.
-        if (this.filterPending) {
-            this.filterPending = false;
+        // If this update() was triggered by one of our own applyJsonFilter calls,
+        // absorb it (decrement the counter) and redraw with the new data but do
+        // not re-apply the filter. Otherwise (initial load, viewport resize,
+        // external slicer change with no active path) kick off the step filter.
+        if (this.filterPendingCount > 0) {
+            this.filterPendingCount--;
         } else if (this.state.selections.length === 0) {
             // Initial load: ensure we are scoped to FromStep = 1 only.
             this.applyPathFilter(this.state);
@@ -98,8 +104,12 @@ export class Visual implements IVisual {
     /**
      * Extract { table, column } targets for FromStep and FromNode from the
      * dataview metadata. queryName is "Table.Column".
+     * Targets are reset on every call so that removing a field from the data
+     * roles panel is reflected immediately — stale targets must not persist.
      */
     private captureFilterTargets(dv: DataView): void {
+        this.fromStepTarget = null;
+        this.fromNodeTarget = null;
         const categories = dv.categorical?.categories ?? [];
 
         for (const cat of categories) {
@@ -122,10 +132,18 @@ export class Visual implements IVisual {
      *   - FromStep IN [1, 2, ..., selections.length + 1]
      *   - FromNode IN [selections...]   (only when selections.length > 0)
      *
-     * When no selections exist (initial load / reset), only the FromStep
-     * filter is applied so that Step 1 returns all of its FromNode rows.
-     * We use FilterAction.replace so a stale FromNode filter from a previous
-     * drill-down is cleared on reset.
+     * When no selections exist (initial load / reset) we issue two calls:
+     *   1. FilterAction.remove — wipes all existing filters on this property,
+     *      including any stale FromNode filter left by a previous session.
+     *      FilterAction.replace is unavailable in this API version; merge alone
+     *      cannot remove a filter that is absent from the new call.
+     *   2. FilterAction.merge — applies the fresh FromStep = 1 constraint.
+     * Each call may trigger an update() echo from Power BI, so we add 2 to the
+     * pending counter.
+     *
+     * When selections are active we control the complete filter set (both step
+     * and node filters are always included), so a single merge is correct and
+     * only 1 echo is expected.
      */
     private applyPathFilter(state: PathState): void {
         if (!this.fromStepTarget) return;
@@ -156,13 +174,17 @@ export class Visual implements IVisual {
             filters.push(nodeFilter);
         }
 
-        this.filterPending = true;
-        this.host.applyJsonFilter(
-            filters,
-            "general",
-            "filter",
-            FilterAction.merge
-        );
+        if (state.selections.length === 0) {
+            // Remove stale filters first, then apply the step-only constraint.
+            // Both calls can produce an update() echo — count both.
+            this.filterPendingCount += 2;
+            this.host.applyJsonFilter(null, "general", "filter", FilterAction.remove);
+            this.host.applyJsonFilter(filters, "general", "filter", FilterAction.merge);
+        } else {
+            // Full filter set provided in a single merge — one echo expected.
+            this.filterPendingCount += 1;
+            this.host.applyJsonFilter(filters, "general", "filter", FilterAction.merge);
+        }
     }
 
     private redraw(): void {
@@ -239,7 +261,7 @@ export class Visual implements IVisual {
             `FromStep col:  ${fmtTarget(this.fromStepTarget)}`,
             `FromNode col:  ${fmtTarget(this.fromNodeTarget)}`,
             `Selections:    ${selections}`,
-            `FilterPending: ${this.filterPending}`,
+            `FilterPending: ${this.filterPendingCount > 0} [${this.filterPendingCount}]`,
             `Unique steps:  ${uniqueFromSteps}`
         ].join("\n");
     }
