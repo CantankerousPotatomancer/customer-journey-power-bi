@@ -160,7 +160,7 @@ export class Visual implements IVisual {
             filters,
             "general",
             "filter",
-            FilterAction.replace
+            FilterAction.merge
         );
     }
 
