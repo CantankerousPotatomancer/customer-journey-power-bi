@@ -140,23 +140,22 @@ export class Visual implements IVisual {
     }
 
     /**
-     * Apply Power BI filters that scope the dataview to only the rows needed
-     * for the current path. Power BI ANDs the two filters together:
-     *   - FromStep IN [1, 2, ..., selections.length + 1]
-     *   - FromNode IN [selections...]   (only when selections.length > 0)
+     * Apply a Power BI filter that scopes the dataview to only the FromStep
+     * values needed for the current path:
+     *   FromStep IN [1, 2, ..., selections.length + 1]
+     *
+     * No FromNode filter is applied here. A global AND on FromNode would also
+     * restrict step-1 rows, hiding all unselected starting nodes in column 0.
+     * Per-column node filtering is handled client-side in getNextStepItems().
      *
      * When no selections exist (initial load / reset) we issue two calls:
-     *   1. FilterAction.remove — wipes all existing filters on this property,
-     *      including any stale FromNode filter left by a previous session.
-     *      FilterAction.replace is unavailable in this API version; merge alone
-     *      cannot remove a filter that is absent from the new call.
+     *   1. FilterAction.remove — wipes any stale filter left by a previous
+     *      session (replace is unavailable; merge alone cannot remove absent
+     *      filters).
      *   2. FilterAction.merge — applies the fresh FromStep = 1 constraint.
-     * Each call may trigger an update() echo from Power BI, so we add 2 to the
-     * pending counter.
+     * Each call may trigger an update() echo, so we add 2 to the counter.
      *
-     * When selections are active we control the complete filter set (both step
-     * and node filters are always included), so a single merge is correct and
-     * only 1 echo is expected.
+     * When selections are active a single merge is sufficient — one echo.
      */
     private applyPathFilter(state: PathState): void {
         if (!this.fromStepTarget) return;
@@ -173,30 +172,16 @@ export class Visual implements IVisual {
             stepConditions
         );
 
-        const filters: AdvancedFilter[] = [stepFilter];
-
-        if (state.selections.length > 0 && this.fromNodeTarget) {
-            const nodeConditions: IAdvancedFilterCondition[] = state.selections.map(
-                node => ({ operator: "Is", value: node })
-            );
-            const nodeFilter = new AdvancedFilter(
-                this.fromNodeTarget,
-                "Or",
-                nodeConditions
-            );
-            filters.push(nodeFilter);
-        }
-
         if (state.selections.length === 0) {
             // Remove stale filters first, then apply the step-only constraint.
             // Both calls can produce an update() echo — count both.
             this.filterPendingCount += 2;
             this.host.applyJsonFilter(null, "general", "filter", FilterAction.remove);
-            this.host.applyJsonFilter(filters, "general", "filter", FilterAction.merge);
+            this.host.applyJsonFilter([stepFilter], "general", "filter", FilterAction.merge);
         } else {
-            // Full filter set provided in a single merge — one echo expected.
+            // Step-range filter only — one echo expected.
             this.filterPendingCount += 1;
-            this.host.applyJsonFilter(filters, "general", "filter", FilterAction.merge);
+            this.host.applyJsonFilter([stepFilter], "general", "filter", FilterAction.merge);
         }
     }
 
@@ -295,7 +280,7 @@ export class Visual implements IVisual {
             "padding:20px",
             "text-align:center"
         ].join(";");
-        msg.textContent = "Add the journey fields (FromStep, FromNode, ToNode, TransitionCount) to the Journey Data bucket to display the journey explorer.";
+        msg.textContent = "Add your data to the Journey Data bucket. The visual auto-detects required columns by name: FromStep, FromNode, ToNode, TransitionCount.";
         this.target.appendChild(msg);
     }
 
