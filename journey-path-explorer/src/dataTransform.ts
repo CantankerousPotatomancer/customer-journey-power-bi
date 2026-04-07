@@ -15,24 +15,24 @@ export type StepTransitions = Map<number, Map<string, Map<string, number>>>;
 
 export function transformDataView(dataView: powerbi.DataView): StepTransitions {
     const result: StepTransitions = new Map();
-    const categorical = dataView?.categorical;
-    if (!categorical?.categories || !categorical?.values) return result;
+    const table = dataView?.table;
+    if (!table?.columns || !table?.rows) return result;
 
-    // Find each category column by role name via source.roles
-    const categories = categorical.categories;
-    const fromStepCat = categories.find(c => c.source.roles["fromStep"]);
-    const fromNodeCat = categories.find(c => c.source.roles["fromNode"]);
-    const toNodeCat   = categories.find(c => c.source.roles["toNode"]);
-    const countCol    = categorical.values.find(v => v.source.roles["transitionCount"]);
+    const columns = table.columns;
+    const rows    = table.rows;
 
-    if (!fromStepCat || !fromNodeCat || !toNodeCat || !countCol) return result;
+    const fromStepIdx = columns.findIndex(c => c.displayName === "FromStep");
+    const fromNodeIdx = columns.findIndex(c => c.displayName === "FromNode");
+    const toNodeIdx   = columns.findIndex(c => c.displayName === "ToNode");
+    const countIdx    = columns.findIndex(c => c.displayName === "TransitionCount");
 
-    const len = fromStepCat.values.length;
-    for (let i = 0; i < len; i++) {
-        const fromStep = Number(fromStepCat.values[i]);
-        const fromNode = String(fromNodeCat.values[i] ?? "").trim();
-        const toNode   = String(toNodeCat.values[i]   ?? "").trim();
-        const count    = Number(countCol.values[i] ?? 0);
+    if (fromStepIdx < 0 || fromNodeIdx < 0 || toNodeIdx < 0 || countIdx < 0) return result;
+
+    for (const row of rows) {
+        const fromStep = Number(row[fromStepIdx]);
+        const fromNode = String(row[fromNodeIdx] ?? "").trim();
+        const toNode   = String(row[toNodeIdx]   ?? "").trim();
+        const count    = Number(row[countIdx] ?? 0);
 
         if (!isFinite(fromStep) || fromStep <= 0 || !fromNode || !toNode || !isFinite(count)) continue;
 
