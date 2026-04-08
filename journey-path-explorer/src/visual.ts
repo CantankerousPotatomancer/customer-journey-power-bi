@@ -29,6 +29,27 @@ import { render } from "./renderer";
 
 const DEBUG = true;
 
+/**
+ * When true the visual skips transform and render entirely and acts as a pure
+ * diagnostics surface.  Flip this to false once the data-shape mystery is
+ * resolved so normal rendering resumes.
+ */
+const DIAGNOSTICS_ONLY = true;
+
+/** Snapshot of data-shape information captured at the very top of update(). */
+interface DebugState {
+    seq: number;
+    timestamp: string;
+    operationKind: string | undefined;
+    dvCount: number;
+    hasDv: boolean;
+    hasTable: boolean;
+    hasCategorical: boolean;
+    hasMatrix: boolean;
+    rowCount: number;
+    columns: powerbi.DataViewTableColumn[];
+}
+
 export class Visual implements IVisual {
     private readonly target: HTMLElement;
     private readonly host: IVisualHost;
@@ -48,6 +69,12 @@ export class Visual implements IVisual {
     private filterPendingCount = 0;
     /** Retained for debug overlay; null when no dataview is present. */
     private lastDv: DataView | null = null;
+
+    /** Monotonically increasing counter; incremented at the very top of every update(). */
+    private updateSeq = 0;
+    private lastUpdateSummary = "";
+    /** Most recent diagnostic snapshot; stored so redraw() can re-render the overlay. */
+    private lastDebugState: DebugState | null = null;
 
     constructor(options: VisualConstructorOptions) {
         this.target = options.element;
@@ -69,59 +96,127 @@ export class Visual implements IVisual {
     }
 
     public update(options: VisualUpdateOptions): void {
-        const viewport = options.viewport;
-        this.lastViewport = { width: viewport.width, height: viewport.height };
-
-        // Size the root container to the Power BI viewport
-        this.target.style.width  = `${viewport.width}px`;
-        this.target.style.height = `${viewport.height}px`;
+        // ── STEP 1: capture diagnostics BEFORE any logic that could throw ──────
+        this.updateSeq++;
+        const seq       = this.updateSeq;
+        const timestamp = new Date().toISOString();
 
         const dvs = options.dataViews;
         const dv: DataView | undefined = dvs?.[0];
 
-        // Always capture the latest dataView and filter targets so the debug
-        // overlay can diagnose projection issues even when rows are absent.
-        this.lastDv = dv ?? null;
-        this.captureFilterTargets(dv);
+        const currentDebugState: DebugState = {
+            seq,
+            timestamp,
+            operationKind: (options as any).operationKind,
+            dvCount:        dvs?.length ?? 0,
+            hasDv:          !!dv,
+            hasTable:       !!dv?.table,
+            hasCategorical: !!(dv as any)?.categorical,
+            hasMatrix:      !!(dv as any)?.matrix,
+            rowCount:       dv?.table?.rows?.length ?? 0,
+            columns:        dv?.table?.columns ?? []
+        };
+        this.lastDebugState = currentDebugState;
 
-        if (!dvs?.length || !dv?.table?.rows?.length || !dv?.table?.columns?.length) {
-            this.renderNoData();
-            if (DEBUG) {
-                this.renderDebugOverlay();
-            }
-            return;
-        }
+        // ── STEP 2: emit full signature to console immediately ─────────────────
+        console.log("UPDATE START", {
+            seq,
+            timestamp,
+            operationKind:  (options as any).operationKind,
+            dataViews:      dvs?.length ?? 0,
+            hasDv:          !!dv,
+            hasTable:       !!dv?.table,
+            hasCategorical: !!(dv as any)?.categorical,
+            hasMatrix:      !!(dv as any)?.matrix,
+            rowCount:       dv?.table?.rows?.length ?? 0,
+            columns: (dv?.table?.columns ?? []).map((c, i) => ({
+                i,
+                displayName: c.displayName,
+                queryName:   c.queryName,
+                roles:       c.roles,
+                isMeasure:   c.isMeasure,
+                type:        c.type,
+                aggregate:   (c as any).aggregate,
+                ref:         (c as any)?.expr?.ref,
+                entity:      (c as any)?.expr?.source?.entity
+            }))
+        });
 
-        this.settings = parseSettings(dv);
-
+        // ── STEP 3: paint overlay immediately so seq number is always live ─────
         if (DEBUG) {
-            const REQUIRED = ["FromStep", "FromNode", "ToNode", "TransitionCount"] as const;
-            const cols = dv.table?.columns ?? [];
-            const colCheck = REQUIRED.map(name => ({
-                name,
-                found: cols.some(c => colMatches(c, name))
-            }));
-            console.log("PRE-TRANSFORM column check:", colCheck);
-            const missing = colCheck.filter(x => !x.found).map(x => x.name);
-            if (missing.length > 0) {
-                console.warn("PRE-TRANSFORM missing required columns:", missing);
+            this.renderDebugOverlay(currentDebugState);
+        }
+
+        // ── STEP 4: everything else wrapped so errors appear in overlay ────────
+        try {
+            const viewport = options.viewport;
+            this.lastViewport = { width: viewport.width, height: viewport.height };
+
+            this.target.style.width  = `${viewport.width}px`;
+            this.target.style.height = `${viewport.height}px`;
+
+            this.lastDv = dv ?? null;
+            this.captureFilterTargets(dv);
+
+            // ── DIAGNOSTICS_ONLY mode: skip transform + render ─────────────────
+            if (DIAGNOSTICS_ONLY) {
+                // Wipe existing content and show only the overlay
+                this.target.innerHTML = "";
+                if (DEBUG) {
+                    this.renderDebugOverlay(currentDebugState);
+                }
+                return;
             }
+
+            if (!dvs?.length || !dv?.table?.rows?.length || !dv?.table?.columns?.length) {
+                this.renderNoData();
+                if (DEBUG) {
+                    this.renderDebugOverlay(currentDebugState);
+                }
+                return;
+            }
+
+            this.settings = parseSettings(dv);
+
+            console.log("BEFORE TRANSFORM", { seq });
+
+            if (DEBUG) {
+                const REQUIRED = ["FromStep", "FromNode", "ToNode", "TransitionCount"] as const;
+                const cols = dv.table?.columns ?? [];
+                const colCheck = REQUIRED.map(name => ({
+                    name,
+                    found: cols.some(c => colMatches(c, name))
+                }));
+                console.log("PRE-TRANSFORM column check:", colCheck);
+                const missing = colCheck.filter(x => !x.found).map(x => x.name);
+                if (missing.length > 0) {
+                    console.warn("PRE-TRANSFORM missing required columns:", missing);
+                }
+            }
+
+            this.transitions = transformDataView(dv);
+
+            console.log("AFTER TRANSFORM", { seq, stepCount: this.transitions.size });
+
+            // If this update() was triggered by one of our own applyJsonFilter calls,
+            // absorb it (decrement the counter) and redraw with the new data but do
+            // not re-apply the filter. Otherwise (initial load, viewport resize,
+            // external slicer change with no active path) kick off the step filter.
+            if (this.filterPendingCount > 0) {
+                this.filterPendingCount--;
+            } else if (this.state.selections.length === 0) {
+                // Initial load: ensure we are scoped to FromStep = 1 only.
+                this.applyPathFilter(this.state);
+            }
+
+            console.log("BEFORE RENDER", { seq });
+            this.redraw();
+            console.log("AFTER RENDER", { seq });
+
+        } catch (err: unknown) {
+            console.error("UPDATE CATCH", { seq, err });
+            this.renderFatalDebug(err, currentDebugState);
         }
-
-        this.transitions = transformDataView(dv);
-
-        // If this update() was triggered by one of our own applyJsonFilter calls,
-        // absorb it (decrement the counter) and redraw with the new data but do
-        // not re-apply the filter. Otherwise (initial load, viewport resize,
-        // external slicer change with no active path) kick off the step filter.
-        if (this.filterPendingCount > 0) {
-            this.filterPendingCount--;
-        } else if (this.state.selections.length === 0) {
-            // Initial load: ensure we are scoped to FromStep = 1 only.
-            this.applyPathFilter(this.state);
-        }
-
-        this.redraw();
     }
 
     /**
@@ -224,12 +319,16 @@ export class Visual implements IVisual {
                 this.redraw();
             }
         );
-        if (DEBUG) {
-            this.renderDebugOverlay();
+        // render() calls root.selectAll("*").remove() which wipes the container,
+        // so we must re-append the overlay after every render pass.
+        if (DEBUG && this.lastDebugState) {
+            this.renderDebugOverlay(this.lastDebugState);
         }
     }
 
-    private renderDebugOverlay(): void {
+    // ── Debug rendering ────────────────────────────────────────────────────────
+
+    private ensureOverlay(): HTMLDivElement {
         const OVERLAY_ID = "__debug_overlay__";
         let overlay = this.target.querySelector<HTMLDivElement>(`#${OVERLAY_ID}`);
         if (!overlay) {
@@ -239,14 +338,14 @@ export class Visual implements IVisual {
                 "position:absolute",
                 "top:8px",
                 "right:8px",
-                "background:rgba(0,0,0,0.72)",
+                "background:rgba(0,0,0,0.82)",
                 "color:#fff",
                 "font-size:11px",
                 "font-family:Consolas,monospace",
                 "padding:8px 10px",
                 "border-radius:4px",
                 "z-index:9999",
-                "max-width:480px",
+                "max-width:520px",
                 "line-height:1.6",
                 "pointer-events:none",
                 "white-space:pre"
@@ -254,13 +353,46 @@ export class Visual implements IVisual {
             this.target.style.position = "relative";
             this.target.appendChild(overlay);
         }
+        return overlay;
+    }
 
-        const dv = this.lastDv;
-        const tableColumns = dv?.table?.columns ?? [];
-        const rowCount     = dv?.table?.rows?.length ?? 0;
+    private renderDebugOverlay(state: DebugState): void {
+        const overlay = this.ensureOverlay();
 
-        // Full column metadata logged to console for deep inspection in DevTools
-        console.log("TABLE COLUMNS", tableColumns.map((c, i) => ({
+        const fmtTarget = (t: IFilterColumnTarget | null) =>
+            t ? `${t.table}.${t.column}` : "NOT FOUND";
+
+        const selections = this.state.selections.length > 0
+            ? this.state.selections.join(", ")
+            : "empty";
+
+        const REQUIRED = ["FromStep", "FromNode", "ToNode", "TransitionCount"] as const;
+        const foundLines = REQUIRED.map(name => {
+            const found = state.columns.some(c => colMatches(c, name));
+            return `  ${name.padEnd(16)}: ${found ? "FOUND" : "MISSING <<<"}`;
+        });
+
+        const columnLines = state.columns.map((c, i) => {
+            const dn        = c.displayName ?? "(none)";
+            const qn        = c.queryName   ?? "(none)";
+            const ref       = (c as any)?.expr?.ref              ?? "(none)";
+            const entity    = (c as any)?.expr?.source?.entity   ?? "(none)";
+            const isMeasure = c.isMeasure ? "measure" : "col";
+            const typeStr   = (c.type as any)?.category
+                           ?? (c.type as any)?.primitiveType
+                           ?? "?";
+            const rolesJson = JSON.stringify(c.roles ?? {});
+            const agg       = (c as any)?.aggregate ?? "-";
+            return [
+                `  col[${i}] dn="${dn}" qn="${qn}"`,
+                `         ref="${ref}" entity="${entity}"`,
+                `         ${isMeasure} type=${typeStr} agg=${agg}`,
+                `         roles=${rolesJson}`
+            ].join("\n");
+        });
+
+        // Full column metadata to console for deep inspection in DevTools
+        console.log("TABLE COLUMNS (overlay render)", state.columns.map((c, i) => ({
             i,
             displayName: c.displayName,
             queryName:   c.queryName,
@@ -272,50 +404,68 @@ export class Visual implements IVisual {
             entity:      (c as any)?.expr?.source?.entity
         })));
 
-        const fmtTarget = (t: IFilterColumnTarget | null) =>
-            t ? `${t.table}.${t.column}` : "NOT FOUND";
-
-        const selections = this.state.selections.length > 0
-            ? this.state.selections.join(", ")
-            : "empty";
-
-        const columnLines = tableColumns.map((c, i) => {
-            const dn        = c.displayName ?? "(none)";
-            const qn        = c.queryName   ?? "(none)";
-            const ref       = (c as any)?.expr?.ref ?? "(none)";
-            const entity    = (c as any)?.expr?.source?.entity ?? "(none)";
-            const isMeasure = c.isMeasure ? "measure" : "col";
-            const typeStr   = (c.type as any)?.category
-                           ?? (c.type as any)?.primitiveType
-                           ?? "?";
-            const roles     = Object.keys(c.roles ?? {}).join(",") || "(none)";
-            const agg       = (c as any)?.aggregate ?? "-";
-            return [
-                `  col[${i}] dn="${dn}" qn="${qn}"`,
-                `         ref="${ref}" entity="${entity}"`,
-                `         ${isMeasure} type=${typeStr} roles=${roles} agg=${agg}`
-            ].join("\n");
-        });
-
-        const REQUIRED = ["FromStep", "FromNode", "ToNode", "TransitionCount"] as const;
-        const foundLines = REQUIRED.map(name => {
-            const found = tableColumns.some(c => colMatches(c, name));
-            return `  ${name.padEnd(16)}: ${found ? "FOUND" : "MISSING <<<"}`;
-        });
-
+        // Fully replace overlay content on every call — no stale DOM survives.
         overlay.textContent = [
-            `[DEBUG]`,
-            `hasDataView:      ${!!dv}`,
-            `hasTable:         ${!!dv?.table}`,
-            `Rows:             ${rowCount}`,
-            `Cols (${tableColumns.length}):`,
+            `[DEBUG] seq=#${state.seq}  ${state.timestamp}`,
+            `operationKind:    ${state.operationKind ?? "(none)"}`,
+            `DIAGNOSTICS_ONLY: ${DIAGNOSTICS_ONLY}`,
+            ``,
+            `── DataView shape ──────────────────────────────`,
+            `dvCount:          ${state.dvCount}`,
+            `hasDv:            ${state.hasDv}`,
+            `hasTable:         ${state.hasTable}`,
+            `hasCategorical:   ${state.hasCategorical}`,
+            `hasMatrix:        ${state.hasMatrix}`,
+            `rowCount:         ${state.rowCount}`,
+            ``,
+            `── Columns (${state.columns.length}) ──────────────────────────────`,
             ...columnLines,
-            `Required columns:`,
+            ``,
+            `── Required columns ─────────────────────────────`,
             ...foundLines,
+            ``,
+            `── Filter targets ───────────────────────────────`,
             `FromStep target:  ${fmtTarget(this.fromStepTarget)}`,
             `FromNode target:  ${fmtTarget(this.fromNodeTarget)}`,
+            ``,
+            `── State ────────────────────────────────────────`,
             `Selections:       ${selections}`,
             `FilterPending:    ${this.filterPendingCount > 0} [${this.filterPendingCount}]`
+        ].join("\n");
+    }
+
+    private renderFatalDebug(err: unknown, state: DebugState): void {
+        const errMsg = err instanceof Error ? err.message        : String(err);
+        const stack  = err instanceof Error ? (err.stack ?? "(no stack)") : "(no stack)";
+
+        // Wipe whatever the partial render may have left
+        this.target.innerHTML = "";
+
+        const overlay = this.ensureOverlay();
+
+        const colSummary = state.columns
+            .map((c, i) => `  col[${i}] "${c.displayName}" roles=${JSON.stringify(c.roles ?? {})}`)
+            .join("\n");
+
+        overlay.textContent = [
+            `[FATAL ERROR in update #${state.seq}]`,
+            `timestamp:   ${state.timestamp}`,
+            `operationKind: ${state.operationKind ?? "(none)"}`,
+            ``,
+            `── Error ────────────────────────────────────────`,
+            `message:     ${errMsg}`,
+            `stack:`,
+            stack,
+            ``,
+            `── DataView state at time of throw ──────────────`,
+            `hasDv:         ${state.hasDv}`,
+            `hasTable:      ${state.hasTable}`,
+            `hasCategorical:${state.hasCategorical}`,
+            `hasMatrix:     ${state.hasMatrix}`,
+            `rowCount:      ${state.rowCount}`,
+            ``,
+            `── Columns seen before failure ──────────────────`,
+            colSummary || "  (none)"
         ].join("\n");
     }
 
