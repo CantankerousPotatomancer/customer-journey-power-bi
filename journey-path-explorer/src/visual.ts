@@ -92,7 +92,22 @@ export class Visual implements IVisual {
             return;
         }
 
-        this.settings    = parseSettings(dv);
+        this.settings = parseSettings(dv);
+
+        if (DEBUG) {
+            const REQUIRED = ["FromStep", "FromNode", "ToNode", "TransitionCount"] as const;
+            const cols = dv.table?.columns ?? [];
+            const colCheck = REQUIRED.map(name => ({
+                name,
+                found: cols.some(c => colMatches(c, name))
+            }));
+            console.log("PRE-TRANSFORM column check:", colCheck);
+            const missing = colCheck.filter(x => !x.found).map(x => x.name);
+            if (missing.length > 0) {
+                console.warn("PRE-TRANSFORM missing required columns:", missing);
+            }
+        }
+
         this.transitions = transformDataView(dv);
 
         // If this update() was triggered by one of our own applyJsonFilter calls,
