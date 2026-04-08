@@ -47,7 +47,7 @@ interface DebugState {
     hasCategorical: boolean;
     hasMatrix: boolean;
     rowCount: number;
-    columns: powerbi.DataViewTableColumn[];
+    columns: powerbi.DataViewMetadataColumn[];
 }
 
 export class Visual implements IVisual {
