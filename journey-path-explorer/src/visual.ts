@@ -77,16 +77,23 @@ export class Visual implements IVisual {
         this.target.style.height = `${viewport.height}px`;
 
         const dvs = options.dataViews;
-        if (!dvs?.length || !dvs[0]?.table?.rows?.length || !dvs[0]?.table?.columns?.length) {
+        const dv: DataView | undefined = dvs?.[0];
+
+        // Always capture the latest dataView and filter targets so the debug
+        // overlay can diagnose projection issues even when rows are absent.
+        this.lastDv = dv ?? null;
+        this.captureFilterTargets(dv);
+
+        if (!dvs?.length || !dv?.table?.rows?.length || !dv?.table?.columns?.length) {
             this.renderNoData();
+            if (DEBUG) {
+                this.renderDebugOverlay();
+            }
             return;
         }
 
-        const dv: DataView = dvs[0];
-        this.lastDv      = dv;
         this.settings    = parseSettings(dv);
         this.transitions = transformDataView(dv);
-        this.captureFilterTargets(dv);
 
         // If this update() was triggered by one of our own applyJsonFilter calls,
         // absorb it (decrement the counter) and redraw with the new data but do
@@ -237,6 +244,19 @@ export class Visual implements IVisual {
         const tableColumns = dv?.table?.columns ?? [];
         const rowCount     = dv?.table?.rows?.length ?? 0;
 
+        // Full column metadata logged to console for deep inspection in DevTools
+        console.log("TABLE COLUMNS", tableColumns.map((c, i) => ({
+            i,
+            displayName: c.displayName,
+            queryName:   c.queryName,
+            roles:       c.roles,
+            isMeasure:   c.isMeasure,
+            type:        c.type,
+            aggregate:   (c as any).aggregate,
+            ref:         (c as any)?.expr?.ref,
+            entity:      (c as any)?.expr?.source?.entity
+        })));
+
         const fmtTarget = (t: IFilterColumnTarget | null) =>
             t ? `${t.table}.${t.column}` : "NOT FOUND";
 
@@ -245,23 +265,42 @@ export class Visual implements IVisual {
             : "empty";
 
         const columnLines = tableColumns.map((c, i) => {
-            const dn  = c.displayName ?? "(none)";
-            const qn  = c.queryName   ?? "(none)";
-            const ref = (c as any)?.expr?.ref ?? "(none)";
-            return `  col[${i}] dn="${dn}" qn="${qn}" ref="${ref}"`;
+            const dn        = c.displayName ?? "(none)";
+            const qn        = c.queryName   ?? "(none)";
+            const ref       = (c as any)?.expr?.ref ?? "(none)";
+            const entity    = (c as any)?.expr?.source?.entity ?? "(none)";
+            const isMeasure = c.isMeasure ? "measure" : "col";
+            const typeStr   = (c.type as any)?.category
+                           ?? (c.type as any)?.primitiveType
+                           ?? "?";
+            const roles     = Object.keys(c.roles ?? {}).join(",") || "(none)";
+            const agg       = (c as any)?.aggregate ?? "-";
+            return [
+                `  col[${i}] dn="${dn}" qn="${qn}"`,
+                `         ref="${ref}" entity="${entity}"`,
+                `         ${isMeasure} type=${typeStr} roles=${roles} agg=${agg}`
+            ].join("\n");
+        });
+
+        const REQUIRED = ["FromStep", "FromNode", "ToNode", "TransitionCount"] as const;
+        const foundLines = REQUIRED.map(name => {
+            const found = tableColumns.some(c => colMatches(c, name));
+            return `  ${name.padEnd(16)}: ${found ? "FOUND" : "MISSING <<<"}`;
         });
 
         overlay.textContent = [
             `[DEBUG]`,
-            `hasDataView:   ${!!dv}`,
-            `hasTable:      ${!!dv?.table}`,
-            `Rows:          ${rowCount}`,
+            `hasDataView:      ${!!dv}`,
+            `hasTable:         ${!!dv?.table}`,
+            `Rows:             ${rowCount}`,
             `Cols (${tableColumns.length}):`,
             ...columnLines,
-            `FromStep col:  ${fmtTarget(this.fromStepTarget)}`,
-            `FromNode col:  ${fmtTarget(this.fromNodeTarget)}`,
-            `Selections:    ${selections}`,
-            `FilterPending: ${this.filterPendingCount > 0} [${this.filterPendingCount}]`
+            `Required columns:`,
+            ...foundLines,
+            `FromStep target:  ${fmtTarget(this.fromStepTarget)}`,
+            `FromNode target:  ${fmtTarget(this.fromNodeTarget)}`,
+            `Selections:       ${selections}`,
+            `FilterPending:    ${this.filterPendingCount > 0} [${this.filterPendingCount}]`
         ].join("\n");
     }
 
