@@ -334,7 +334,7 @@ export class Visual implements IVisual {
             "padding:20px",
             "text-align:center"
         ].join(";");
-        msg.textContent = "Add your data to the Journey Data bucket. The visual auto-detects required columns by name: FromStep, FromNode, ToNode, TransitionCount.";
+        msg.textContent = "Add your data to the four field wells: From Step, From Node, To Node, Transition Count.";
         this.target.appendChild(msg);
     }
 
