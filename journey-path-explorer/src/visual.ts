@@ -16,7 +16,7 @@ import {
     IFilterColumnTarget
 } from "powerbi-models";
 
-import { transformDataView, StepTransitions } from "./dataTransform";
+import { transformDataViewDetailed, getStep1Items, StepTransitions, TransformDiagnostics } from "./dataTransform";
 import { colMatches } from "./columnMatch";
 import {
     parseSettings,
@@ -31,10 +31,10 @@ const DEBUG = true;
 
 /**
  * When true the visual skips transform and render entirely and acts as a pure
- * diagnostics surface.  Flip this to false once the data-shape mystery is
- * resolved so normal rendering resumes.
+ * diagnostics surface.  Set to false now that column mapping is confirmed
+ * working — normal rendering is re-enabled with the overlay still visible.
  */
-const DIAGNOSTICS_ONLY = true;
+const DIAGNOSTICS_ONLY = false;
 
 /** Snapshot of data-shape information captured at the very top of update(). */
 interface DebugState {
@@ -48,6 +48,10 @@ interface DebugState {
     hasMatrix: boolean;
     rowCount: number;
     columns: powerbi.DataViewMetadataColumn[];
+    /** Populated after transformDataViewDetailed() completes; null before that. */
+    transformDiag: TransformDiagnostics | null;
+    /** step1Items count captured just before calling render(). */
+    step1ItemCount: number | null;
 }
 
 export class Visual implements IVisual {
@@ -114,7 +118,9 @@ export class Visual implements IVisual {
             hasCategorical: !!(dv as any)?.categorical,
             hasMatrix:      !!(dv as any)?.matrix,
             rowCount:       dv?.table?.rows?.length ?? 0,
-            columns:        dv?.table?.columns ?? []
+            columns:        dv?.table?.columns ?? [],
+            transformDiag:  null,
+            step1ItemCount: null
         };
         this.lastDebugState = currentDebugState;
 
@@ -194,9 +200,30 @@ export class Visual implements IVisual {
                 }
             }
 
-            this.transitions = transformDataView(dv);
+            const { transitions, diag: transformDiag } = transformDataViewDetailed(dv);
+            this.transitions = transitions;
+            currentDebugState.transformDiag = transformDiag;
 
-            console.log("AFTER TRANSFORM", { seq, stepCount: this.transitions.size });
+            console.log("AFTER TRANSFORM", {
+                seq,
+                stepCount:          this.transitions.size,
+                columnIndexes:      transformDiag.columnIndexes,
+                rowCount:           transformDiag.rowCount,
+                parsedRows:         transformDiag.parsedRows,
+                skippedRows:        transformDiag.skippedRows,
+                invalidFromStep:    transformDiag.invalidFromStepCount,
+                invalidCount:       transformDiag.invalidCountCount,
+                emptyNode:          transformDiag.emptyNodeCount,
+                nanCountSample:     transformDiag.nanCountSample,
+                distinctSteps:      transformDiag.distinctSteps,
+                distinctStep1Nodes: transformDiag.distinctStep1Nodes,
+                sampleRows:         transformDiag.sampleRows
+            });
+
+            // Re-render overlay now that transform diagnostics are available
+            if (DEBUG) {
+                this.renderDebugOverlay(currentDebugState);
+            }
 
             // If this update() was triggered by one of our own applyJsonFilter calls,
             // absorb it (decrement the counter) and redraw with the new data but do
@@ -303,6 +330,21 @@ export class Visual implements IVisual {
     }
 
     private redraw(): void {
+        const { topN, minCount } = this.settings.dataControls;
+        const step1Items = getStep1Items(this.transitions, topN, minCount);
+
+        if (this.lastDebugState) {
+            this.lastDebugState.step1ItemCount = step1Items.length;
+        }
+
+        console.log("REDRAW step1", {
+            step1ItemCount:    step1Items.length,
+            topN,
+            minCount,
+            transitionSteps:   this.transitions.size,
+            selections:        this.state.selections
+        });
+
         render(
             this.target,
             this.state,
@@ -404,6 +446,38 @@ export class Visual implements IVisual {
             entity:      (c as any)?.expr?.source?.entity
         })));
 
+        // ── Transform diagnostics section ──────────────────────────────────
+        const td = state.transformDiag;
+        const transformLines: string[] = [];
+        if (td) {
+            const ci = td.columnIndexes;
+            transformLines.push(
+                `── Transform diagnostics ───────────────────────`,
+                `colIdx:  fromStep=${ci.fromStep} fromNode=${ci.fromNode} toNode=${ci.toNode} count=${ci.count}`,
+                `rows:    ${td.rowCount} total | ${td.parsedRows} parsed | ${td.skippedRows} skipped`,
+                `  invalidStep=${td.invalidFromStepCount} invalidCount=${td.invalidCountCount} emptyNode=${td.emptyNodeCount}`,
+                `nanCount (first 100): ${td.nanCountSample}`,
+                `distinctSteps: [${td.distinctSteps.join(",")}]`,
+                `step1Nodes:    ${td.distinctStep1Nodes}`,
+                ``
+            );
+            if (td.sampleRows.length > 0) {
+                transformLines.push(`── Raw rows sample (first ${td.sampleRows.length}) ─────────────`);
+                td.sampleRows.forEach((r, i) => {
+                    transformLines.push(
+                        `  [${i}] step=${JSON.stringify(r.fromStep)} fn=${JSON.stringify(r.fromNode)} tn=${JSON.stringify(r.toNode)} n=${JSON.stringify(r.count)}`
+                    );
+                });
+                transformLines.push(``);
+            }
+        } else {
+            transformLines.push(`── Transform diagnostics ───────────────────────`, `  (not yet run)`, ``);
+        }
+
+        const step1Line = state.step1ItemCount !== null
+            ? `step1Items:       ${state.step1ItemCount}  (topN=${this.settings.dataControls.topN} minCount=${this.settings.dataControls.minCount})`
+            : `step1Items:       (not yet computed)`;
+
         // Fully replace overlay content on every call — no stale DOM survives.
         overlay.textContent = [
             `[DEBUG] seq=#${state.seq}  ${state.timestamp}`,
@@ -423,6 +497,10 @@ export class Visual implements IVisual {
             ``,
             `── Required columns ─────────────────────────────`,
             ...foundLines,
+            ``,
+            ...transformLines,
+            `── Render gate ──────────────────────────────────`,
+            step1Line,
             ``,
             `── Filter targets ───────────────────────────────`,
             `FromStep target:  ${fmtTarget(this.fromStepTarget)}`,
