@@ -52,6 +52,8 @@ interface DebugState {
     transformDiag: TransformDiagnostics | null;
     /** step1Items count captured just before calling render(). */
     step1ItemCount: number | null;
+    /** Most recently constructed filter JSON; null if applyPathFilter has not run. */
+    lastFilterJson: string | null;
 }
 
 export class Visual implements IVisual {
@@ -120,7 +122,8 @@ export class Visual implements IVisual {
             rowCount:       dv?.table?.rows?.length ?? 0,
             columns:        dv?.table?.columns ?? [],
             transformDiag:  null,
-            step1ItemCount: null
+            step1ItemCount: null,
+            lastFilterJson: null
         };
         this.lastDebugState = currentDebugState;
 
@@ -310,11 +313,25 @@ export class Visual implements IVisual {
             stepConditions.push({ operator: "Is", value: s });
         }
 
+        // Power BI requires logicalOperator = "And" when there is exactly one
+        // condition. "Or" with a single condition throws a runtime error.
+        // "And" is always safe; for multiple step conditions use "Or" so rows
+        // matching any step in the selected range are included.
+        const logicalOperator: "And" | "Or" = stepConditions.length === 1 ? "And" : "Or";
+
         const stepFilter = new AdvancedFilter(
             this.fromStepTarget,
-            "Or",
-            stepConditions
+            logicalOperator,
+            ...stepConditions
         );
+
+        const filterJson = JSON.stringify(stepFilter, null, 2);
+        console.log("APPLY FILTER", filterJson, { conditionCount: stepConditions.length, logicalOperator });
+
+        // Store for debug overlay
+        if (this.lastDebugState) {
+            this.lastDebugState.lastFilterJson = filterJson;
+        }
 
         if (state.selections.length === 0) {
             // Remove stale filters first, then apply the step-only constraint.
@@ -478,6 +495,19 @@ export class Visual implements IVisual {
             ? `step1Items:       ${state.step1ItemCount}  (topN=${this.settings.dataControls.topN} minCount=${this.settings.dataControls.minCount})`
             : `step1Items:       (not yet computed)`;
 
+        // ── Filter diagnostics section ─────────────────────────────────────
+        const filterLines: string[] = [];
+        filterLines.push(`── Filter diagnostics ───────────────────────────`);
+        filterLines.push(`FromStep target:  ${fmtTarget(this.fromStepTarget)}`);
+        filterLines.push(`FromNode target:  ${fmtTarget(this.fromNodeTarget)}`);
+        if (state.lastFilterJson !== null) {
+            filterLines.push(`Last filter JSON:`);
+            filterLines.push(state.lastFilterJson);
+        } else {
+            filterLines.push(`Last filter JSON: (applyPathFilter not yet called)`);
+        }
+        filterLines.push(``);
+
         // Fully replace overlay content on every call — no stale DOM survives.
         overlay.textContent = [
             `[DEBUG] seq=#${state.seq}  ${state.timestamp}`,
@@ -502,10 +532,7 @@ export class Visual implements IVisual {
             `── Render gate ──────────────────────────────────`,
             step1Line,
             ``,
-            `── Filter targets ───────────────────────────────`,
-            `FromStep target:  ${fmtTarget(this.fromStepTarget)}`,
-            `FromNode target:  ${fmtTarget(this.fromNodeTarget)}`,
-            ``,
+            ...filterLines,
             `── State ────────────────────────────────────────`,
             `Selections:       ${selections}`,
             `FilterPending:    ${this.filterPendingCount > 0} [${this.filterPendingCount}]`
