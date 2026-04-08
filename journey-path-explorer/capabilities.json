@@ -3,7 +3,7 @@
         {
             "displayName": "Journey Data",
             "name": "values",
-            "kind": "GroupingOrMeasure"
+            "kind": "Grouping"
         }
     ],
     "dataViewMappings": [
