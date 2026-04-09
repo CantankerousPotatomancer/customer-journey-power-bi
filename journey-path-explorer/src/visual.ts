@@ -31,8 +31,7 @@ const DEBUG = true;
 
 /**
  * When true the visual skips transform and render entirely and acts as a pure
- * diagnostics surface.  Set to false now that column mapping is confirmed
- * working — normal rendering is re-enabled with the overlay still visible.
+ * diagnostics surface.
  */
 const DIAGNOSTICS_ONLY = false;
 
@@ -60,6 +59,10 @@ export class Visual implements IVisual {
     private readonly target: HTMLElement;
     private readonly host: IVisualHost;
     private state: PathState;
+    /**
+     * Accumulated transitions across all fetched slices.
+     * Never replaced on echo updates — only merged or cleared on reset.
+     */
     private transitions: StepTransitions;
     private settings: VisualSettings;
     private lastViewport: { width: number; height: number };
@@ -67,19 +70,17 @@ export class Visual implements IVisual {
     private fromNodeTarget: IFilterColumnTarget | null = null;
     /**
      * Number of update() calls expected from Power BI as echoes of our own
-     * applyJsonFilter calls. A reset issues two calls (remove + merge), so this
-     * can be 2; a selection update issues one (merge only), so it is 1.
-     * Using a counter instead of a boolean prevents field-addition updates from
-     * being mistaken for filter echoes when multiple updates arrive concurrently.
+     * applyJsonFilter calls.
+     *
+     * Initial reset: 2 (remove + merge).
+     * Selection update: 1 (merge only).
      */
     private filterPendingCount = 0;
-    /** Retained for debug overlay; null when no dataview is present. */
+    /** Retained for debug overlay. */
     private lastDv: DataView | null = null;
 
-    /** Monotonically increasing counter; incremented at the very top of every update(). */
     private updateSeq = 0;
     private lastUpdateSummary = "";
-    /** Most recent diagnostic snapshot; stored so redraw() can re-render the overlay. */
     private lastDebugState: DebugState | null = null;
 
     constructor(options: VisualConstructorOptions) {
@@ -127,31 +128,21 @@ export class Visual implements IVisual {
         };
         this.lastDebugState = currentDebugState;
 
-        // ── STEP 2: emit full signature to console immediately ─────────────────
+        // ── STEP 2: emit full signature to console ─────────────────────────────
         console.log("UPDATE START", {
             seq,
             timestamp,
-            operationKind:  (options as any).operationKind,
-            dataViews:      dvs?.length ?? 0,
-            hasDv:          !!dv,
-            hasTable:       !!dv?.table,
-            hasCategorical: !!(dv as any)?.categorical,
-            hasMatrix:      !!(dv as any)?.matrix,
-            rowCount:       dv?.table?.rows?.length ?? 0,
-            columns: (dv?.table?.columns ?? []).map((c, i) => ({
-                i,
-                displayName: c.displayName,
-                queryName:   c.queryName,
-                roles:       c.roles,
-                isMeasure:   c.isMeasure,
-                type:        c.type,
-                aggregate:   (c as any).aggregate,
-                ref:         (c as any)?.expr?.ref,
-                entity:      (c as any)?.expr?.source?.entity
-            }))
+            operationKind:      (options as any).operationKind,
+            dataViews:          dvs?.length ?? 0,
+            hasDv:              !!dv,
+            hasTable:           !!dv?.table,
+            rowCount:           dv?.table?.rows?.length ?? 0,
+            filterPendingCount: this.filterPendingCount,
+            selectedPath:       this.state.selections.slice(),
+            accumulatedSteps:   Array.from(this.transitions.keys()).sort((a, b) => a - b),
         });
 
-        // ── STEP 3: paint overlay immediately so seq number is always live ─────
+        // ── STEP 3: paint overlay immediately ─────────────────────────────────
         if (DEBUG) {
             this.renderDebugOverlay(currentDebugState);
         }
@@ -167,21 +158,15 @@ export class Visual implements IVisual {
             this.lastDv = dv ?? null;
             this.captureFilterTargets(dv);
 
-            // ── DIAGNOSTICS_ONLY mode: skip transform + render ─────────────────
             if (DIAGNOSTICS_ONLY) {
-                // Wipe existing content and show only the overlay
                 this.target.innerHTML = "";
-                if (DEBUG) {
-                    this.renderDebugOverlay(currentDebugState);
-                }
+                if (DEBUG) this.renderDebugOverlay(currentDebugState);
                 return;
             }
 
             if (!dvs?.length || !dv?.table?.rows?.length || !dv?.table?.columns?.length) {
                 this.renderNoData();
-                if (DEBUG) {
-                    this.renderDebugOverlay(currentDebugState);
-                }
+                if (DEBUG) this.renderDebugOverlay(currentDebugState);
                 return;
             }
 
@@ -203,43 +188,67 @@ export class Visual implements IVisual {
                 }
             }
 
-            const { transitions, diag: transformDiag } = transformDataViewDetailed(dv);
-            this.transitions = transitions;
+            const { transitions: newSlice, diag: transformDiag } = transformDataViewDetailed(dv);
             currentDebugState.transformDiag = transformDiag;
 
             console.log("AFTER TRANSFORM", {
                 seq,
-                stepCount:          this.transitions.size,
-                columnIndexes:      transformDiag.columnIndexes,
+                sliceStepCount:     newSlice.size,
+                sliceSteps:         Array.from(newSlice.keys()).sort((a, b) => a - b),
                 rowCount:           transformDiag.rowCount,
                 parsedRows:         transformDiag.parsedRows,
                 skippedRows:        transformDiag.skippedRows,
-                invalidFromStep:    transformDiag.invalidFromStepCount,
-                invalidCount:       transformDiag.invalidCountCount,
-                emptyNode:          transformDiag.emptyNodeCount,
-                nanCountSample:     transformDiag.nanCountSample,
                 distinctSteps:      transformDiag.distinctSteps,
                 distinctStep1Nodes: transformDiag.distinctStep1Nodes,
                 sampleRows:         transformDiag.sampleRows
             });
 
-            // Re-render overlay now that transform diagnostics are available
+            // ── Merge new slice into accumulated transitions (never replace) ──────
+            // On reset, applyPathFilter clears this.transitions before sending the
+            // filter, so the first echo arrives into an empty map (same as replace).
+            newSlice.forEach((nodeMap, step) => {
+                if (!this.transitions.has(step)) {
+                    this.transitions.set(step, new Map());
+                }
+                const existingStep = this.transitions.get(step)!;
+                nodeMap.forEach((toNodes, fromNode) => {
+                    // Overwrite the fromNode entry with fresh data from this slice.
+                    existingStep.set(fromNode, toNodes);
+                });
+            });
+
+            const accumulatedSteps = Array.from(this.transitions.keys()).sort((a, b) => a - b);
+
+            // ── TRANSFORM RESULT diagnostic ────────────────────────────────────
+            console.log("TRANSFORM RESULT", {
+                seq,
+                accumulatedSteps,
+                step1Nodes: this.transitions.get(1)?.size ?? 0,
+                step2Nodes: this.transitions.get(2)?.size ?? 0,
+                step3Nodes: this.transitions.get(3)?.size ?? 0,
+                step4Nodes: this.transitions.get(4)?.size ?? 0,
+                selectedPath: this.state.selections.slice(),
+            });
+
             if (DEBUG) {
                 this.renderDebugOverlay(currentDebugState);
             }
 
-            // If this update() was triggered by one of our own applyJsonFilter calls,
-            // absorb it (decrement the counter) and redraw with the new data but do
-            // not re-apply the filter. Otherwise (initial load, viewport resize,
-            // external slicer change with no active path) kick off the step filter.
+            // ── Echo / filter re-trigger logic ─────────────────────────────────
             if (this.filterPendingCount > 0) {
                 this.filterPendingCount--;
+                console.log("UPDATE echo absorbed", { seq, filterPendingCount: this.filterPendingCount });
             } else if (this.state.selections.length === 0) {
-                // Initial load: ensure we are scoped to FromStep = 1 only.
+                // Initial load or external change with empty path: scope to step 1.
+                console.log("UPDATE initial filter trigger", { seq });
                 this.applyPathFilter(this.state);
             }
 
-            console.log("BEFORE RENDER", { seq });
+            console.log("BEFORE RENDER", {
+                seq,
+                selectedPath:     this.state.selections.slice(),
+                accumulatedSteps,
+            });
             this.redraw();
             console.log("AFTER RENDER", { seq });
 
@@ -251,9 +260,7 @@ export class Visual implements IVisual {
 
     /**
      * Extract { table, column } targets for FromStep and FromNode from the
-     * dataview table metadata. queryName is "Table.Column".
-     * Targets are reset on every call so that removing a field from the data
-     * roles panel is reflected immediately — stale targets must not persist.
+     * dataview table metadata.
      */
     private captureFilterTargets(dv: DataView | undefined): void {
         this.fromStepTarget = null;
@@ -279,7 +286,6 @@ export class Visual implements IVisual {
             if (colMatches(col, "FromStep")) {
                 this.fromStepTarget = { table, column };
             }
-
             if (colMatches(col, "FromNode")) {
                 this.fromNodeTarget = { table, column };
             }
@@ -287,62 +293,103 @@ export class Visual implements IVisual {
     }
 
     /**
-     * Apply a Power BI filter that scopes the dataview to only the FromStep
-     * values needed for the current path:
-     *   FromStep IN [1, 2, ..., selections.length + 1]
+     * "Next-slice" filter strategy:
      *
-     * No FromNode filter is applied here. A global AND on FromNode would also
-     * restrict step-1 rows, hiding all unselected starting nodes in column 0.
-     * Per-column node filtering is handled client-side in getNextStepItems().
+     * Instead of requesting all steps 1..N cumulatively, each call requests
+     * only the SINGLE next step needed, scoped to the relevant FromNode values.
+     * Transitions are accumulated in this.transitions across calls so prior
+     * steps are never lost.
      *
-     * When no selections exist (initial load / reset) we issue two calls:
-     *   1. FilterAction.remove — wipes any stale filter left by a previous
-     *      session (replace is unavailable; merge alone cannot remove absent
-     *      filters).
-     *   2. FilterAction.merge — applies the fresh FromStep = 1 constraint.
-     * Each call may trigger an update() echo, so we add 2 to the counter.
+     * Filter shape by interaction:
+     *   initial / reset  → FromStep = 1  (no FromNode filter)
+     *   click at step N  → FromStep = N+1  AND  FromNode IN [toNodes of last selection]
      *
-     * When selections are active a single merge is sufficient — one echo.
+     * The FromNode candidates are the toNodes of the just-selected node at
+     * step N — these are the likely step-(N+1) fromNodes in a sequential
+     * journey. Using them keeps each query small even on large datasets.
+     *
+     * When no filter target is available, or when candidates cannot yet be
+     * computed (fast click before prior echo), the FromNode filter is omitted
+     * and only the step constraint is sent (graceful degradation).
      */
     private applyPathFilter(state: PathState): void {
-        if (!this.fromStepTarget) return;
-
-        const maxStep = state.selections.length + 1;
-        const stepConditions: IAdvancedFilterCondition[] = [];
-        for (let s = 1; s <= maxStep; s++) {
-            stepConditions.push({ operator: "Is", value: s });
+        if (!this.fromStepTarget) {
+            console.warn("APPLY FILTER skipped: fromStepTarget not found");
+            return;
         }
 
-        // Power BI requires logicalOperator = "And" when there is exactly one
-        // condition. "Or" with a single condition throws a runtime error.
-        // "And" is always safe; for multiple step conditions use "Or" so rows
-        // matching any step in the selected range are included.
-        const logicalOperator: "And" | "Or" = stepConditions.length === 1 ? "And" : "Or";
+        const sel      = state.selections;
+        const nextStep = sel.length + 1;
 
-        const stepFilter = new AdvancedFilter(
-            this.fromStepTarget,
-            logicalOperator,
-            ...stepConditions
-        );
+        const fromStepCond: IAdvancedFilterCondition = { operator: "Is", value: nextStep };
+        const fromStepFilter = new AdvancedFilter(this.fromStepTarget, "And", fromStepCond);
 
-        const filterJson = JSON.stringify(stepFilter, null, 2);
-        console.log("APPLY FILTER", filterJson, { conditionCount: stepConditions.length, logicalOperator });
+        if (sel.length === 0) {
+            // ── Reset / initial: fetch step 1 only ────────────────────────────
+            // Clear accumulated transitions so stale higher-step data doesn't
+            // persist after a reset.
+            this.transitions = new Map();
 
-        // Store for debug overlay
-        if (this.lastDebugState) {
-            this.lastDebugState.lastFilterJson = filterJson;
-        }
+            const filterJson = JSON.stringify([fromStepFilter], null, 2);
+            console.log("APPLY FILTER", {
+                nextStep,
+                selectedNode:   null,
+                candidateCount: 0,
+                isReset:        true,
+                filterJson
+            });
+            if (this.lastDebugState) this.lastDebugState.lastFilterJson = filterJson;
 
-        if (state.selections.length === 0) {
-            // Remove stale filters first, then apply the step-only constraint.
-            // Both calls can produce an update() echo — count both.
+            // Two calls: remove clears any stale filter, merge applies the new one.
+            // Each may produce an update() echo.
             this.filterPendingCount += 2;
-            this.host.applyJsonFilter(null, "general", "filter", FilterAction.remove);
-            this.host.applyJsonFilter([stepFilter], "general", "filter", FilterAction.merge);
+            this.host.applyJsonFilter(null,           "general", "filter", FilterAction.remove);
+            this.host.applyJsonFilter([fromStepFilter], "general", "filter", FilterAction.merge);
+
         } else {
-            // Step-range filter only — one echo expected.
+            // ── Selection: fetch the next step scoped to relevant fromNodes ────
+            const selectedNode = sel[sel.length - 1];
+
+            // Candidates = toNodes of the last selected node at step sel.length.
+            // These are the expected fromNodes at step nextStep.
+            // Example: sel=["Homepage"], step=1 → candidates are step-1 toNodes
+            //          from "Homepage" (e.g. ["Product Page","Cart"]).
+            const candidates: string[] = Array.from(
+                this.transitions.get(sel.length)?.get(selectedNode)?.keys() ?? []
+            );
+
+            const filters: AdvancedFilter[] = [fromStepFilter];
+
+            if (this.fromNodeTarget && candidates.length > 0) {
+                // Cap at 50 candidates to keep filter payload manageable.
+                const MAX_CANDIDATES = 50;
+                const limited = candidates.slice(0, MAX_CANDIDATES);
+                const nodeConds: IAdvancedFilterCondition[] = limited.map(n => ({
+                    operator: "Is" as const,
+                    value: n
+                }));
+                const fromNodeFilter = new AdvancedFilter(
+                    this.fromNodeTarget,
+                    nodeConds.length === 1 ? "And" : "Or",
+                    ...nodeConds
+                );
+                filters.push(fromNodeFilter);
+            }
+
+            const filterJson = JSON.stringify(filters, null, 2);
+            console.log("APPLY FILTER", {
+                nextStep,
+                selectedNode,
+                candidateCount:  candidates.length,
+                candidatesCapped: candidates.length > 50,
+                isReset:         false,
+                fromNodeFilterApplied: filters.length > 1,
+                filterJson
+            });
+            if (this.lastDebugState) this.lastDebugState.lastFilterJson = filterJson;
+
             this.filterPendingCount += 1;
-            this.host.applyJsonFilter([stepFilter], "general", "filter", FilterAction.merge);
+            this.host.applyJsonFilter(filters, "general", "filter", FilterAction.merge);
         }
     }
 
@@ -354,12 +401,12 @@ export class Visual implements IVisual {
             this.lastDebugState.step1ItemCount = step1Items.length;
         }
 
-        console.log("REDRAW step1", {
-            step1ItemCount:    step1Items.length,
+        console.log("REDRAW", {
+            step1ItemCount:  step1Items.length,
             topN,
             minCount,
-            transitionSteps:   this.transitions.size,
-            selections:        this.state.selections
+            selectedPath:    this.state.selections.slice(),
+            accumulatedSteps: Array.from(this.transitions.keys()).sort((a, b) => a - b),
         });
 
         render(
@@ -368,18 +415,30 @@ export class Visual implements IVisual {
             this.transitions,
             this.settings,
             (columnIndex: number, node: string) => {
+                const selectedPathBefore = this.state.selections.slice();
                 this.state = selectNode(this.state, columnIndex, node);
+                const selectedPathAfter = this.state.selections.slice();
+                console.log("CLICK", {
+                    columnIndex,
+                    node,
+                    selectedPathBefore,
+                    selectedPathAfter,
+                    filterPendingCountBefore: this.filterPendingCount,
+                });
                 this.applyPathFilter(this.state);
                 this.redraw();
             },
             () => {
+                console.log("RESET", {
+                    selectedPathBefore:       this.state.selections.slice(),
+                    filterPendingCountBefore: this.filterPendingCount,
+                });
                 this.state = resetState();
                 this.applyPathFilter(this.state);
                 this.redraw();
             }
         );
-        // render() calls root.selectAll("*").remove() which wipes the container,
-        // so we must re-append the overlay after every render pass.
+
         if (DEBUG && this.lastDebugState) {
             this.renderDebugOverlay(this.lastDebugState);
         }
@@ -450,7 +509,6 @@ export class Visual implements IVisual {
             ].join("\n");
         });
 
-        // Full column metadata to console for deep inspection in DevTools
         console.log("TABLE COLUMNS (overlay render)", state.columns.map((c, i) => ({
             i,
             displayName: c.displayName,
@@ -474,8 +532,8 @@ export class Visual implements IVisual {
                 `rows:    ${td.rowCount} total | ${td.parsedRows} parsed | ${td.skippedRows} skipped`,
                 `  invalidStep=${td.invalidFromStepCount} invalidCount=${td.invalidCountCount} emptyNode=${td.emptyNodeCount}`,
                 `nanCount (first 100): ${td.nanCountSample}`,
-                `distinctSteps: [${td.distinctSteps.join(",")}]`,
-                `step1Nodes:    ${td.distinctStep1Nodes}`,
+                `distinctSteps (slice): [${td.distinctSteps.join(",")}]`,
+                `step1Nodes (slice):    ${td.distinctStep1Nodes}`,
                 ``
             );
             if (td.sampleRows.length > 0) {
@@ -490,6 +548,20 @@ export class Visual implements IVisual {
         } else {
             transformLines.push(`── Transform diagnostics ───────────────────────`, `  (not yet run)`, ``);
         }
+
+        // ── Accumulated transitions summary ────────────────────────────────
+        const accLines: string[] = [];
+        accLines.push(`── Accumulated transitions ──────────────────────`);
+        const steps = Array.from(this.transitions.keys()).sort((a, b) => a - b);
+        if (steps.length === 0) {
+            accLines.push(`  (empty)`);
+        } else {
+            steps.forEach(s => {
+                const sm = this.transitions.get(s)!;
+                accLines.push(`  step ${s}: ${sm.size} fromNodes`);
+            });
+        }
+        accLines.push(``);
 
         const step1Line = state.step1ItemCount !== null
             ? `step1Items:       ${state.step1ItemCount}  (topN=${this.settings.dataControls.topN} minCount=${this.settings.dataControls.minCount})`
@@ -508,7 +580,6 @@ export class Visual implements IVisual {
         }
         filterLines.push(``);
 
-        // Fully replace overlay content on every call — no stale DOM survives.
         overlay.textContent = [
             `[DEBUG] seq=#${state.seq}  ${state.timestamp}`,
             `operationKind:    ${state.operationKind ?? "(none)"}`,
@@ -518,8 +589,6 @@ export class Visual implements IVisual {
             `dvCount:          ${state.dvCount}`,
             `hasDv:            ${state.hasDv}`,
             `hasTable:         ${state.hasTable}`,
-            `hasCategorical:   ${state.hasCategorical}`,
-            `hasMatrix:        ${state.hasMatrix}`,
             `rowCount:         ${state.rowCount}`,
             ``,
             `── Columns (${state.columns.length}) ──────────────────────────────`,
@@ -529,6 +598,7 @@ export class Visual implements IVisual {
             ...foundLines,
             ``,
             ...transformLines,
+            ...accLines,
             `── Render gate ──────────────────────────────────`,
             step1Line,
             ``,
@@ -543,7 +613,6 @@ export class Visual implements IVisual {
         const errMsg = err instanceof Error ? err.message        : String(err);
         const stack  = err instanceof Error ? (err.stack ?? "(no stack)") : "(no stack)";
 
-        // Wipe whatever the partial render may have left
         this.target.innerHTML = "";
 
         const overlay = this.ensureOverlay();
@@ -565,8 +634,6 @@ export class Visual implements IVisual {
             `── DataView state at time of throw ──────────────`,
             `hasDv:         ${state.hasDv}`,
             `hasTable:      ${state.hasTable}`,
-            `hasCategorical:${state.hasCategorical}`,
-            `hasMatrix:     ${state.hasMatrix}`,
             `rowCount:      ${state.rowCount}`,
             ``,
             `── Columns seen before failure ──────────────────`,
@@ -593,10 +660,6 @@ export class Visual implements IVisual {
         this.target.appendChild(msg);
     }
 
-    /**
-     * Called by Power BI to populate each section of the Format Pane.
-     * Must return current values so edits in the pane round-trip correctly.
-     */
     public enumerateObjectInstances(
         options: EnumerateVisualObjectInstancesOptions
     ): VisualObjectInstance[] {

@@ -153,11 +153,30 @@ function renderColumnArea(
         });
     }
 
+    console.log("RENDER columns", {
+        columnCount:  columns.length,
+        selectedPath: state.selections.slice(),
+        columns: columns.map(c => ({
+            stepLabel:   c.stepLabel,
+            columnIndex: c.columnIndex,
+            fromStep:    c.fromStep,
+            fromNode:    c.fromNode,
+            selected:    c.selected
+        }))
+    });
+
     columns.forEach(col => {
         const items =
             col.fromNode === null
                 ? getStep1Items(transitions, settings.dataControls.topN, settings.dataControls.minCount)
                 : getNextStepItems(transitions, col.fromStep, col.fromNode, settings.dataControls.topN, settings.dataControls.minCount);
+
+        console.log(`RENDER col[${col.columnIndex}] ${col.stepLabel}`, {
+            fromStep:   col.fromStep,
+            fromNode:   col.fromNode,
+            itemCount:  items.length,
+            topItems:   items.slice(0, 5).map(i => `${i.label}:${i.count}`),
+        });
 
         renderColumn(area, col, items, settings, onNodeClick);
     });
