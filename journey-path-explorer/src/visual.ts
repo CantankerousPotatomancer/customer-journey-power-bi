@@ -9,6 +9,7 @@ import EnumerateVisualObjectInstancesOptions = powerbi.EnumerateVisualObjectInst
 import VisualObjectInstance      = powerbi.VisualObjectInstance;
 import DataView                  = powerbi.DataView;
 import FilterAction              = powerbi.FilterAction;
+import VisualUpdateType          = powerbi.VisualUpdateType;
 
 import {
     AdvancedFilter,
@@ -34,22 +35,6 @@ const DEBUG = true;
  * diagnostics surface.
  */
 const DIAGNOSTICS_ONLY = false;
-
-/**
- * When true, all applyJsonFilter() calls are skipped and the visual navigates
- * entirely using the data Power BI delivers on the initial (unfiltered) load.
- *
- * This is the stable path: equivalent to removing FromStep from the field
- * wells, but FromStep is still present and used by the transform.  The
- * server-side filter path has an unresolved echo-counting instability where
- * spurious Power BI updates (resize, slicer, page events) consume pending
- * echo slots, causing the merge echo to arrive as wasEcho=false and trigger
- * an unintended applyPathFilter(sel=[]) reset that clears transitions.
- *
- * Set to false only after the filter/update lifecycle is confirmed stable in
- * a controlled build.
- */
-const DISABLE_SERVER_FILTER = true;
 
 /** Snapshot of data-shape information captured at the very top of update(). */
 interface DebugState {
@@ -86,12 +71,19 @@ export class Visual implements IVisual {
     private fromNodeTarget: IFilterColumnTarget | null = null;
     /**
      * Number of update() calls expected from Power BI as echoes of our own
-     * applyJsonFilter calls.
-     *
-     * Initial reset: 2 (remove + merge).
-     * Selection update: 2 (remove + merge — prevents step-filter accumulation).
+     * applyJsonFilter calls.  Each applyJsonFilter call produces exactly one
+     * echo (merge replaces — it does not accumulate), so this is incremented
+     * by 1 per call.
      */
     private filterPendingCount = 0;
+    /**
+     * Prevents update() from re-triggering the initial step-1 filter more than
+     * once.  Set to true the first time the initial filter is fired (either on
+     * the first genuine data update, or immediately when the user explicitly
+     * resets).  Reset to false only when the user clicks "Reset Path" so the
+     * next genuine update after reset re-fetches step 1.
+     */
+    private initialFilterFired = false;
     /** Retained for debug overlay. */
     private lastDv: DataView | null = null;
 
@@ -180,10 +172,19 @@ export class Visual implements IVisual {
                 return;
             }
 
+            // ── Skip non-data updates (resize, style, viewMode) ───────────────
+            // Power BI fires update() for resize and style changes without new
+            // rows.  These must never touch the echo counter or re-trigger logic
+            // or they will consume a pending slot and misclassify the real echo.
+            const isDataUpdate = !!(options.type & VisualUpdateType.Data);
+            if (!isDataUpdate) {
+                if (DEBUG) this.renderDebugOverlay(currentDebugState);
+                return;
+            }
+
             // ── Echo accounting (before any early return) ──────────────────────
-            // Must run here so that 0-row echoes (e.g. from the remove call)
-            // correctly decrement the counter rather than being swallowed by
-            // the early-return path below.
+            // Must run here so that 0-row echoes correctly decrement the counter
+            // rather than being swallowed by the early-return path below.
             const wasEcho = this.filterPendingCount > 0;
             if (wasEcho) {
                 this.filterPendingCount--;
@@ -266,11 +267,12 @@ export class Visual implements IVisual {
                 this.renderDebugOverlay(currentDebugState);
             }
 
-            // ── Echo / filter re-trigger logic ─────────────────────────────────
-            // wasEcho was set (and the counter decremented) before the early-return
-            // guard above, so 0-row echoes are counted correctly.
-            if (!wasEcho && this.state.selections.length === 0) {
-                // Genuine new update with no active path — scope to step 1.
+            // ── Initial filter trigger ─────────────────────────────────────────
+            // On the very first genuine data update fire the step-1 filter once.
+            // initialFilterFired is also set true by the reset handler so that
+            // explicit resets don't double-trigger through here.
+            if (!wasEcho && !this.initialFilterFired) {
+                this.initialFilterFired = true;
                 console.log("UPDATE initial filter trigger", { seq });
                 this.applyPathFilter(this.state);
             }
@@ -349,17 +351,6 @@ export class Visual implements IVisual {
             return;
         }
 
-        if (DISABLE_SERVER_FILTER) {
-            // Server filtering disabled — navigate client-side only.
-            // All step data arrives on the initial unfiltered load; no filter
-            // calls are issued so the echo-counting instability cannot occur.
-            console.log("APPLY FILTER skipped: DISABLE_SERVER_FILTER=true", {
-                nextStep: state.selections.length + 1,
-                sel:      state.selections.slice(),
-            });
-            return;
-        }
-
         const sel      = state.selections;
         const nextStep = sel.length + 1;
 
@@ -367,11 +358,10 @@ export class Visual implements IVisual {
         const fromStepFilter = new AdvancedFilter(this.fromStepTarget, "And", fromStepCond);
 
         if (sel.length === 0) {
-            // ── Reset / initial: fetch step 1 only ────────────────────────────
-            // Clear accumulated transitions so stale higher-step data doesn't
-            // persist after a reset.
-            this.transitions = new Map();
-
+            // ── Initial / post-reset: fetch step 1 only ───────────────────────
+            // transitions has already been cleared by the reset handler before
+            // this is called; do not clear it here so echoes during initial load
+            // cannot accidentally wipe data that has just been fetched.
             const filterJson = JSON.stringify([fromStepFilter], null, 2);
             console.log("APPLY FILTER", {
                 nextStep,
@@ -481,6 +471,14 @@ export class Visual implements IVisual {
                     selectedPathBefore:       this.state.selections.slice(),
                     filterPendingCountBefore: this.filterPendingCount,
                 });
+                // Clear all accumulated transition data and reset navigation.
+                // This is the ONLY place transitions is cleared — not in
+                // applyPathFilter — so spurious echoes can never wipe the map.
+                this.transitions = new Map();
+                this.filterPendingCount = 0;
+                // Mark as fired so update() doesn't double-trigger; the filter
+                // is applied explicitly on the next line.
+                this.initialFilterFired = true;
                 this.state = resetState();
                 this.applyPathFilter(this.state);
                 this.redraw();
@@ -631,8 +629,7 @@ export class Visual implements IVisual {
         overlay.textContent = [
             `[DEBUG] seq=#${state.seq}  ${state.timestamp}`,
             `operationKind:    ${state.operationKind ?? "(none)"}`,
-            `DIAGNOSTICS_ONLY:       ${DIAGNOSTICS_ONLY}`,
-            `DISABLE_SERVER_FILTER:  ${DISABLE_SERVER_FILTER}`,
+            `DIAGNOSTICS_ONLY:    ${DIAGNOSTICS_ONLY}`,
             ``,
             `── DataView shape ──────────────────────────────`,
             `dvCount:          ${state.dvCount}`,
@@ -654,7 +651,8 @@ export class Visual implements IVisual {
             ...filterLines,
             `── State ────────────────────────────────────────`,
             `Selections:       ${selections}`,
-            `FilterPending:    ${this.filterPendingCount > 0} [${this.filterPendingCount}]`
+            `FilterPending:    ${this.filterPendingCount > 0} [${this.filterPendingCount}]`,
+            `InitialFired:     ${this.initialFilterFired}`
         ].join("\n");
     }
 

@@ -180,6 +180,15 @@ function renderColumnArea(
 
         renderColumn(area, col, items, settings, onNodeClick);
     });
+
+    // Scroll the column area to the rightmost position so the newly added
+    // step column is always visible without the user dragging the scrollbar.
+    const areaEl = area.node();
+    if (areaEl) {
+        requestAnimationFrame(() => {
+            areaEl.scrollLeft = areaEl.scrollWidth;
+        });
+    }
 }
 
 // ─── Single column ────────────────────────────────────────────────────────────
