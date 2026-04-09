@@ -9,7 +9,6 @@ import EnumerateVisualObjectInstancesOptions = powerbi.EnumerateVisualObjectInst
 import VisualObjectInstance      = powerbi.VisualObjectInstance;
 import DataView                  = powerbi.DataView;
 import FilterAction              = powerbi.FilterAction;
-import VisualUpdateType          = powerbi.VisualUpdateType;
 
 import {
     AdvancedFilter,
@@ -40,6 +39,7 @@ const DIAGNOSTICS_ONLY = false;
 interface DebugState {
     seq: number;
     timestamp: string;
+    updateType: number | undefined;
     operationKind: string | undefined;
     dvCount: number;
     hasDv: boolean;
@@ -122,6 +122,7 @@ export class Visual implements IVisual {
         const currentDebugState: DebugState = {
             seq,
             timestamp,
+            updateType:    options.type,
             operationKind: (options as any).operationKind,
             dvCount:        dvs?.length ?? 0,
             hasDv:          !!dv,
@@ -137,9 +138,12 @@ export class Visual implements IVisual {
         this.lastDebugState = currentDebugState;
 
         // ── STEP 2: emit full signature to console ─────────────────────────────
+        // updateType bit meanings: Data=2, Resize=4, ViewMode=8, Style=16,
+        // ResizeEnd=32, FilterOptionsChange=256.  Log raw value for diagnosis.
         console.log("UPDATE START", {
             seq,
             timestamp,
+            updateType:         options.type,
             operationKind:      (options as any).operationKind,
             dataViews:          dvs?.length ?? 0,
             hasDv:              !!dv,
@@ -172,32 +176,40 @@ export class Visual implements IVisual {
                 return;
             }
 
-            // ── Skip non-data updates (resize, style, viewMode) ───────────────
-            // Power BI fires update() for resize and style changes without new
-            // rows.  These must never touch the echo counter or re-trigger logic
-            // or they will consume a pending slot and misclassify the real echo.
-            const isDataUpdate = !!(options.type & VisualUpdateType.Data);
-            if (!isDataUpdate) {
-                if (DEBUG) this.renderDebugOverlay(currentDebugState);
-                return;
-            }
-
             // ── Echo accounting (before any early return) ──────────────────────
-            // Must run here so that 0-row echoes correctly decrement the counter
-            // rather than being swallowed by the early-return path below.
+            // Runs unconditionally — all update() calls (resize, data, style)
+            // reach here.  The isDataUpdate guard was removed because filter
+            // echoes may carry a type without the Data bit set in some Power BI
+            // environments (e.g. FilterOptionsChange=256), which would silently
+            // drop the echo and leave transitions un-updated.
+            // initialFilterFired now provides the re-trigger protection that
+            // the isDataUpdate guard was intended to supplement.
             const wasEcho = this.filterPendingCount > 0;
             if (wasEcho) {
                 this.filterPendingCount--;
-                console.log("UPDATE echo absorbed", { seq, filterPendingCount: this.filterPendingCount });
+                console.log("UPDATE echo absorbed", {
+                    seq,
+                    filterPendingCount: this.filterPendingCount,
+                    updateType: options.type
+                });
             }
 
             if (!dvs?.length || !dv?.table?.rows?.length || !dv?.table?.columns?.length) {
-                // Only clear the display for a genuine (non-echo) empty update.
-                // Echo updates (remove call, batched filter ops) may arrive with
-                // 0 rows transiently — wiping the display for those causes the
-                // visual to flicker to blank during normal navigation.
-                if (!wasEcho) {
+                // Guard: don't wipe active navigation state on a 0-row update.
+                // This can happen when:
+                //   - counter drift (resize consumed the slot) and an echo has
+                //     0 rows because the filter target is wrong
+                //   - Power BI sends an intermediate clearing update before the
+                //     actual filtered data arrives
+                // If we have an active path or accumulated data, preserve it.
+                const hasActiveState = this.state.selections.length > 0 ||
+                                       this.transitions.size > 0;
+                if (!wasEcho && !hasActiveState) {
                     this.renderNoData();
+                } else if (!wasEcho && hasActiveState) {
+                    console.warn("UPDATE 0-row non-echo with active state — preserving display", {
+                        seq, updateType: options.type, selections: this.state.selections.slice()
+                    });
                 }
                 if (DEBUG) this.renderDebugOverlay(currentDebugState);
                 return;
@@ -304,24 +316,38 @@ export class Visual implements IVisual {
             const displayName = col.displayName ?? "";
             const queryName   = col.queryName   ?? "";
 
-            const table =
-                (col as any)?.expr?.source?.entity ??
-                queryName.split(".")[0] ??
-                null;
+            // Prefer expr.ref (the raw query AST field name) for the column
+            // identifier, then the last segment of queryName ("Table.Col"),
+            // then fall back to displayName.  The filter API needs the actual
+            // column identifier in the data model, NOT the display name.
+            const exprRef  = (col as any)?.expr?.ref ?? null;
+            const entity   = (col as any)?.expr?.source?.entity ?? queryName.split(".")[0] ?? null;
+            const colIdent = exprRef
+                ?? (queryName.includes(".") ? queryName.split(".").slice(1).join(".") : null)
+                ?? displayName;
 
-            const column =
-                (col as any)?.expr?.ref ??
-                queryName.split(".").slice(1).join(".") ??
-                displayName;
-
-            if (!table || !column) continue;
+            if (!entity || !colIdent) continue;
 
             if (colMatches(col, "FromStep")) {
-                this.fromStepTarget = { table, column };
+                this.fromStepTarget = { table: entity, column: colIdent };
+                console.log("FILTER TARGET fromStep", {
+                    table: entity, column: colIdent,
+                    sourceExprRef: exprRef, queryName, displayName,
+                    usedFallback: !exprRef
+                });
             }
             if (colMatches(col, "FromNode")) {
-                this.fromNodeTarget = { table, column };
+                this.fromNodeTarget = { table: entity, column: colIdent };
+                console.log("FILTER TARGET fromNode", {
+                    table: entity, column: colIdent,
+                    sourceExprRef: exprRef, queryName, displayName,
+                    usedFallback: !exprRef
+                });
             }
+        }
+
+        if (!this.fromStepTarget) {
+            console.warn("FILTER TARGET: fromStepTarget not found — server filtering disabled for this update");
         }
     }
 
@@ -626,8 +652,24 @@ export class Visual implements IVisual {
         }
         filterLines.push(``);
 
+        const fmtType = (t: number | undefined): string => {
+            if (t === undefined) return "undefined";
+            const parts: string[] = [];
+            if (t & 2)   parts.push("Data(2)");
+            if (t & 4)   parts.push("Resize(4)");
+            if (t & 8)   parts.push("ViewMode(8)");
+            if (t & 16)  parts.push("Style(16)");
+            if (t & 32)  parts.push("ResizeEnd(32)");
+            if (t & 256) parts.push("FilterOpts(256)");
+            const known = 2|4|8|16|32|256;
+            const other = t & ~known;
+            if (other) parts.push(`Other(${other})`);
+            return parts.length ? `${t} [${parts.join("|")}]` : `${t} [?]`;
+        };
+
         overlay.textContent = [
             `[DEBUG] seq=#${state.seq}  ${state.timestamp}`,
+            `updateType:       ${fmtType(state.updateType)}`,
             `operationKind:    ${state.operationKind ?? "(none)"}`,
             `DIAGNOSTICS_ONLY:    ${DIAGNOSTICS_ONLY}`,
             ``,
