@@ -382,10 +382,9 @@ export class Visual implements IVisual {
             });
             if (this.lastDebugState) this.lastDebugState.lastFilterJson = filterJson;
 
-            // Two calls: remove clears any stale filter, merge applies the new one.
-            // Each may produce an update() echo.
-            this.filterPendingCount += 2;
-            this.host.applyJsonFilter(null,           "general", "filter", FilterAction.remove);
+            // merge() replaces the existing filter at this property key (confirmed
+            // by FilterAction semantics — it does NOT accumulate). One echo expected.
+            this.filterPendingCount += 1;
             this.host.applyJsonFilter([fromStepFilter], "general", "filter", FilterAction.merge);
 
         } else {
@@ -431,16 +430,13 @@ export class Visual implements IVisual {
                 candidatesCapped:     candidatesAll.length > MAX_CANDIDATES,
                 isReset:              false,
                 fromNodeFilterApplied: filters.length > 1,
-                removeFilterJson:     "null (clears step filter)",
                 mergeFilterJson
             });
             if (this.lastDebugState) this.lastDebugState.lastFilterJson = mergeFilterJson;
 
-            // Two calls: remove clears the existing step filter to prevent
-            // accumulation (merge alone may AND rather than replace), then
-            // merge applies the new step+node filter. Two echoes expected.
-            this.filterPendingCount += 2;
-            this.host.applyJsonFilter(null,    "general", "filter", FilterAction.remove);
+            // merge() replaces the existing filter at this property key (confirmed
+            // by FilterAction semantics — it does NOT accumulate). One echo expected.
+            this.filterPendingCount += 1;
             this.host.applyJsonFilter(filters, "general", "filter", FilterAction.merge);
         }
     }
