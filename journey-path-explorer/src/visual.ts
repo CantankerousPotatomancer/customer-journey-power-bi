@@ -73,7 +73,7 @@ export class Visual implements IVisual {
      * applyJsonFilter calls.
      *
      * Initial reset: 2 (remove + merge).
-     * Selection update: 1 (merge only).
+     * Selection update: 2 (remove + merge — prevents step-filter accumulation).
      */
     private filterPendingCount = 0;
     /** Retained for debug overlay. */
@@ -164,6 +164,16 @@ export class Visual implements IVisual {
                 return;
             }
 
+            // ── Echo accounting (before any early return) ──────────────────────
+            // Must run here so that 0-row echoes (e.g. from the remove call)
+            // correctly decrement the counter rather than being swallowed by
+            // the early-return path below.
+            const wasEcho = this.filterPendingCount > 0;
+            if (wasEcho) {
+                this.filterPendingCount--;
+                console.log("UPDATE echo absorbed", { seq, filterPendingCount: this.filterPendingCount });
+            }
+
             if (!dvs?.length || !dv?.table?.rows?.length || !dv?.table?.columns?.length) {
                 this.renderNoData();
                 if (DEBUG) this.renderDebugOverlay(currentDebugState);
@@ -235,11 +245,10 @@ export class Visual implements IVisual {
             }
 
             // ── Echo / filter re-trigger logic ─────────────────────────────────
-            if (this.filterPendingCount > 0) {
-                this.filterPendingCount--;
-                console.log("UPDATE echo absorbed", { seq, filterPendingCount: this.filterPendingCount });
-            } else if (this.state.selections.length === 0) {
-                // Initial load or external change with empty path: scope to step 1.
+            // wasEcho was set (and the counter decremented) before the early-return
+            // guard above, so 0-row echoes are counted correctly.
+            if (!wasEcho && this.state.selections.length === 0) {
+                // Genuine new update with no active path — scope to step 1.
                 console.log("UPDATE initial filter trigger", { seq });
                 this.applyPathFilter(this.state);
             }
@@ -355,15 +364,18 @@ export class Visual implements IVisual {
             // Example: sel=["Homepage"], step=1 → candidates are step-1 toNodes
             //          from "Homepage" (e.g. ["Product Page","Cart"]).
             const candidates: string[] = Array.from(
-                this.transitions.get(sel.length)?.get(selectedNode)?.keys() ?? []
-            );
+                this.transitions.get(sel.length)?.get(selectedNode)?.entries() ?? []
+            )
+                .sort((a, b) => b[1] - a[1])
+                .map(([node]) => node);
 
             const filters: AdvancedFilter[] = [fromStepFilter];
 
-            if (this.fromNodeTarget && candidates.length > 0) {
-                // Cap at 50 candidates to keep filter payload manageable.
-                const MAX_CANDIDATES = 50;
-                const limited = candidates.slice(0, MAX_CANDIDATES);
+            const MAX_CANDIDATES = 50;
+            const candidatesAll = candidates.slice();
+            const limited = candidates.slice(0, MAX_CANDIDATES);
+
+            if (this.fromNodeTarget && limited.length > 0) {
                 const nodeConds: IAdvancedFilterCondition[] = limited.map(n => ({
                     operator: "Is" as const,
                     value: n
@@ -376,19 +388,26 @@ export class Visual implements IVisual {
                 filters.push(fromNodeFilter);
             }
 
-            const filterJson = JSON.stringify(filters, null, 2);
+            const mergeFilterJson = JSON.stringify(filters, null, 2);
             console.log("APPLY FILTER", {
                 nextStep,
+                sel: sel.slice(),
                 selectedNode,
-                candidateCount:  candidates.length,
-                candidatesCapped: candidates.length > 50,
-                isReset:         false,
+                candidatesAll:        candidatesAll.slice(),
+                candidatesAfterCap:   limited.slice(),
+                candidatesCapped:     candidatesAll.length > MAX_CANDIDATES,
+                isReset:              false,
                 fromNodeFilterApplied: filters.length > 1,
-                filterJson
+                removeFilterJson:     "null (clears step filter)",
+                mergeFilterJson
             });
-            if (this.lastDebugState) this.lastDebugState.lastFilterJson = filterJson;
+            if (this.lastDebugState) this.lastDebugState.lastFilterJson = mergeFilterJson;
 
-            this.filterPendingCount += 1;
+            // Two calls: remove clears the existing step filter to prevent
+            // accumulation (merge alone may AND rather than replace), then
+            // merge applies the new step+node filter. Two echoes expected.
+            this.filterPendingCount += 2;
+            this.host.applyJsonFilter(null,    "general", "filter", FilterAction.remove);
             this.host.applyJsonFilter(filters, "general", "filter", FilterAction.merge);
         }
     }
